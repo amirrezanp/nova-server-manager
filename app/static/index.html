@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0d0d14">
+  <title>نوا سرور منیجر</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="toast-root" class="toast-root"></div>
+  <div id="modal-root"></div>
+  <section id="auth-screen" class="auth-screen hidden">
+    <div class="auth-glow"></div>
+    <div class="auth-card">
+      <div class="brand-logo large">N</div>
+      <h1>نوا سرور منیجر</h1>
+      <p id="auth-subtitle">ورود به مرکز فرمان سرور</p>
+      <form id="auth-form" class="stack">
+        <label>نام کاربری<input id="auth-username" autocomplete="username" minlength="3" required></label>
+        <label>رمز عبور<input id="auth-password" type="password" autocomplete="current-password" minlength="8" required></label>
+        <button class="btn primary wide" type="submit"><span id="auth-button-text">ورود امن</span></button>
+      </form>
+      <div class="auth-footer"><span class="status-dot"></span> مدیریت امن، ساده و یکپارچه</div>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell hidden">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">N</div>
+        <div><strong>نوا</strong><span>Server Manager</span></div>
+      </div>
+      <nav id="main-nav">
+        <a href="#/dashboard" data-route="dashboard"><i data-icon="dashboard"></i><span>داشبورد</span></a>
+        <a href="#/apps" data-route="apps"><i data-icon="apps"></i><span>برنامه‌ها</span><b id="app-count">۰</b></a>
+        <a href="#/backups" data-route="backups"><i data-icon="backup"></i><span>بکاپ‌ها</span></a>
+        <a href="#/activity" data-route="activity"><i data-icon="activity"></i><span>گزارش فعالیت</span></a>
+        <a href="#/settings" data-route="settings"><i data-icon="settings"></i><span>تنظیمات</span></a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="server-mini"><span class="status-dot"></span><div><strong>وضعیت سرور</strong><small id="sidebar-server">در حال بررسی...</small></div></div>
+        <button id="logout-button" class="nav-button"><i data-icon="logout"></i><span>خروج</span></button>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar">
+        <div class="mobile-brand"><button id="menu-button" class="icon-btn"><i data-icon="menu"></i></button><strong>نوا</strong></div>
+        <div class="breadcrumb"><span>مرکز فرمان</span><b id="page-title">داشبورد</b></div>
+        <div class="top-actions">
+          <button id="refresh-button" class="icon-btn tooltip" data-tip="به‌روزرسانی"><i data-icon="refresh"></i></button>
+          <div class="admin-chip"><span id="admin-avatar">N</span><div><b id="admin-name">مدیر</b><small>Administrator</small></div></div>
+        </div>
+      </header>
+      <div id="page-content" class="page-content">
+        <div class="page-loader"><span></span><p>در حال دریافت اطلاعات سرور...</p></div>
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

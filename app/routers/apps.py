@@ -1,0 +1,252 @@
+import json
+import secrets
+import shutil
+from pathlib import Path
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import settings
+from app.database import SessionLocal, get_db
+from app.models import ActivityLog, App, User
+from app.routers.helpers import app_dict
+from app.schemas import AppCreate, AppUpdate, ContainerExecRequest, DomainRequest
+from app.security import get_current_user
+from app.services import docker_service, proxy_service
+from app.services.file_service import extract_zip_safely
+
+
+router = APIRouter(prefix="/api/apps", tags=["apps"], dependencies=[Depends(get_current_user)])
+
+
+def _get_app(db: Session, app_id: int) -> App:
+    app = db.get(App, app_id)
+    if not app:
+        raise HTTPException(404, "برنامه پیدا نشد")
+    return app
+
+
+def _deploy_background(app_id: int) -> None:
+    with SessionLocal() as db:
+        app = db.get(App, app_id)
+        if not app:
+            return
+        app.status = "deploying"
+        app.last_error = ""
+        db.commit()
+        result = docker_service.deploy(app)
+        app.status = "running" if result.ok else "failed"
+        app.last_error = "" if result.ok else (result.stderr or result.stdout)[-5000:]
+        db.add(ActivityLog(
+            action="deploy",
+            detail=f"{app.name}: {'موفق' if result.ok else 'ناموفق'}",
+            level="info" if result.ok else "error",
+        ))
+        db.commit()
+
+
+@router.get("")
+def list_apps(db: Session = Depends(get_db)):
+    apps = db.scalars(select(App).order_by(App.created_at.desc())).all()
+    for app in apps:
+        current = docker_service.inspect_status(app)
+        mapped = "running" if current == "running" else ("deploying" if app.status == "deploying" else current)
+        if mapped != app.status and app.status != "failed":
+            app.status = mapped
+    db.commit()
+    return [app_dict(app) for app in apps]
+
+
+@router.post("", status_code=201)
+def create_app(payload: AppCreate, db: Session = Depends(get_db)):
+    if db.scalar(select(App).where(App.name == payload.name)):
+        raise HTTPException(409, "این نام قبلاً استفاده شده است")
+    source = settings.app_dir / payload.name
+    source.mkdir(parents=True, exist_ok=False)
+    environment = dict(payload.environment)
+    internal_port = payload.internal_port
+    if payload.app_type in docker_service.DEFAULT_PORTS and payload.internal_port == 3000:
+        internal_port = docker_service.DEFAULT_PORTS[payload.app_type]
+    if payload.app_type == "postgres":
+        environment.setdefault("POSTGRES_USER", "nova")
+        environment.setdefault("POSTGRES_PASSWORD", secrets.token_urlsafe(20))
+        environment.setdefault("POSTGRES_DB", payload.name.replace("-", "_"))
+    elif payload.app_type == "mongodb":
+        environment.setdefault("MONGO_INITDB_ROOT_USERNAME", "nova")
+        environment.setdefault("MONGO_INITDB_ROOT_PASSWORD", secrets.token_urlsafe(20))
+    app = App(
+        name=payload.name,
+        display_name=payload.display_name or payload.name,
+        app_type=payload.app_type,
+        container_name=f"nova-{payload.name}",
+        image=payload.image,
+        internal_port=internal_port,
+        host_port=docker_service.allocate_port(),
+        start_command=payload.start_command,
+        env_json=json.dumps(environment),
+        source_dir=str(source),
+        volume_name=f"nova-{payload.name}-data" if payload.app_type in {"postgres", "mongodb"} else "",
+    )
+    db.add(app)
+    db.add(ActivityLog(action="app_create", detail=f"برنامه {payload.name} ساخته شد"))
+    db.commit()
+    db.refresh(app)
+    return app_dict(app, include_env=True)
+
+
+@router.get("/{app_id}")
+def get_app(app_id: int, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    app.status = docker_service.inspect_status(app)
+    db.commit()
+    return app_dict(app, include_env=True)
+
+
+@router.patch("/{app_id}")
+def update_app(app_id: int, payload: AppUpdate, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    values = payload.model_dump(exclude_unset=True)
+    if "environment" in values:
+        app.env_json = json.dumps(values.pop("environment"))
+    for key, value in values.items():
+        setattr(app, key, value)
+    db.commit()
+    db.refresh(app)
+    return app_dict(app, include_env=True)
+
+
+@router.post("/{app_id}/upload")
+async def upload_source(
+    app_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    app = _get_app(db, app_id)
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".zip"):
+        raise HTTPException(400, "فقط فایل ZIP پذیرفته می‌شود")
+    temp = settings.data_dir / f"upload-{app.id}-{secrets.token_hex(6)}.zip"
+    size = 0
+    try:
+        with temp.open("wb") as output:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > settings.max_upload_mb * 1024 * 1024:
+                    raise HTTPException(413, "حجم فایل بیشتر از حد مجاز است")
+                output.write(chunk)
+        source = Path(app.source_dir)
+        if any(source.iterdir()):
+            old = source.parent / f".{app.name}-old"
+            if old.exists():
+                shutil.rmtree(old)
+            source.rename(old)
+            source.mkdir()
+            try:
+                extract_zip_safely(temp, source)
+            except Exception:
+                shutil.rmtree(source)
+                old.rename(source)
+                raise
+            shutil.rmtree(old)
+        else:
+            extract_zip_safely(temp, source)
+        # Flatten ZIPs containing one top-level directory.
+        entries = list(source.iterdir())
+        if len(entries) == 1 and entries[0].is_dir():
+            nested = entries[0]
+            for child in list(nested.iterdir()):
+                child.rename(source / child.name)
+            nested.rmdir()
+        db.add(ActivityLog(action="source_upload", detail=f"{app.name}: {size} bytes"))
+        db.commit()
+        return {"ok": True, "size": size}
+    except (ValueError, OSError) as exc:
+        raise HTTPException(400, str(exc))
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+@router.post("/{app_id}/deploy", status_code=202)
+def deploy_app(app_id: int, tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    if not docker_service.docker_available():
+        raise HTTPException(503, "Docker در دسترس نیست")
+    app.status = "deploying"
+    app.last_error = ""
+    db.commit()
+    tasks.add_task(_deploy_background, app.id)
+    return {"ok": True, "status": "deploying"}
+
+
+@router.post("/{app_id}/actions/{operation}")
+def app_action(app_id: int, operation: str, db: Session = Depends(get_db)):
+    if operation not in {"start", "stop", "restart"}:
+        raise HTTPException(404, "عملیات نامعتبر")
+    app = _get_app(db, app_id)
+    result = docker_service.action(app, operation)
+    if not result.ok:
+        raise HTTPException(500, result.stderr or result.stdout)
+    app.status = "stopped" if operation == "stop" else "running"
+    db.add(ActivityLog(action=f"app_{operation}", detail=app.name))
+    db.commit()
+    return {"ok": True, "status": app.status}
+
+
+@router.get("/{app_id}/logs")
+def app_logs(app_id: int, tail: int = Query(default=300, ge=10, le=2000), db: Session = Depends(get_db)):
+    return {"logs": docker_service.logs(_get_app(db, app_id), tail)}
+
+
+@router.post("/{app_id}/exec")
+def app_exec(app_id: int, payload: ContainerExecRequest, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    if docker_service.inspect_status(app) != "running":
+        raise HTTPException(409, "کانتینر در حال اجرا نیست")
+    result = docker_service.execute(app, payload.command)
+    return {
+        "ok": result.ok,
+        "output": (result.stdout + result.stderr)[-100000:],
+        "exit_code": result.returncode,
+    }
+
+
+@router.get("/{app_id}/stats")
+def app_stats(app_id: int, db: Session = Depends(get_db)):
+    return docker_service.stats(_get_app(db, app_id))
+
+
+@router.post("/{app_id}/domain")
+def set_domain(app_id: int, payload: DomainRequest, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    if app.app_type in {"postgres", "mongodb"}:
+        raise HTTPException(400, "دامنه HTTP به سرویس دیتابیس متصل نمی‌شود")
+    existing = db.scalar(select(App).where(App.domain == payload.domain, App.id != app.id))
+    if existing:
+        raise HTTPException(409, "این دامنه به برنامهٔ دیگری متصل است")
+    result = proxy_service.configure_domain(app, payload.domain, payload.enable_ssl)
+    if not result.ok:
+        raise HTTPException(500, result.stderr or result.stdout)
+    app.domain = payload.domain.lower()
+    db.add(ActivityLog(action="domain_set", detail=f"{app.name}: {app.domain}"))
+    db.commit()
+    return {"ok": True, "domain": app.domain}
+
+
+@router.delete("/{app_id}")
+def delete_app(app_id: int, delete_data: bool = False, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    docker_service.remove(app)
+    proxy_service.remove_domain(app)
+    name = app.name
+    source = Path(app.source_dir)
+    volume = app.volume_name
+    db.delete(app)
+    db.commit()
+    if delete_data:
+        if source.resolve().parent == settings.app_dir.resolve():
+            shutil.rmtree(source, ignore_errors=True)
+        if volume:
+            from app.services.common import run_command
+            run_command(["docker", "volume", "rm", volume], timeout=120)
+    return {"ok": True, "name": name, "data_deleted": delete_data}
