@@ -24,7 +24,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Nova Server Manager API",
-    version="2.0.0",
+    version="2.0.1",
     docs_url="/api/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -58,7 +58,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "nova-server-manager", "version": "2.0.0"}
+    return {"ok": True, "service": "nova-server-manager", "version": "2.0.1"}
 
 
 @app.get("/{path:path}", include_in_schema=False)

@@ -31,6 +31,22 @@ rsync -a --delete --exclude='.git' --exclude='.env' --exclude='.venv' --exclude=
   "${SCRIPT_DIR}/" /opt/nova-server-manager/
 /opt/nova-server-manager/.venv/bin/pip install -r /opt/nova-server-manager/requirements.txt
 systemctl start nova-server-manager
+
+HEALTHY=false
+for _ in {1..30}; do
+  if curl -fsS http://127.0.0.1:8787/api/health >/dev/null 2>&1; then
+    HEALTHY=true
+    break
+  fi
+  sleep 1
+done
+
+if [[ "${HEALTHY}" != "true" ]]; then
+  echo "سرویس پس از ۳۰ ثانیه آماده نشد. آخرین گزارش:"
+  journalctl -u nova-server-manager -n 80 --no-pager
+  exit 1
+fi
+
 curl -fsS http://127.0.0.1:8787/api/health
 trap - ERR
 echo

@@ -2,7 +2,7 @@
 
 پنل مدیریت و دیپلوی فارسی برای سرورهای Ubuntu؛ با FastAPI، Docker، Nginx و رابط حرفه‌ای Next.js و RTL.
 
-نسخهٔ فعلی: **2.0.0**
+نسخهٔ فعلی: **2.0.1**
 
 ## امکانات
 
@@ -183,4 +183,4 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 - مستندات API بعد از ورود: `/api/docs`
 - Health check: `/api/health`
-- نسخه: `2.0.0`
+- نسخه: `2.0.1`
