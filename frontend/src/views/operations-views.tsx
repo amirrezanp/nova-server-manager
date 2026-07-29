@@ -2,8 +2,9 @@
 
 import {
   Activity, AlertTriangle, ArchiveRestore, BellRing, Bot, CheckCircle2, Clock3,
-  Cpu, DatabaseBackup, Download, HardDrive, History, KeyRound, LoaderCircle,
-  MemoryStick, Power, RefreshCcw, Rocket, Server, ShieldCheck, Trash2, X,
+  Cpu, DatabaseBackup, Download, ExternalLink, FolderOpen, Globe2, HardDrive, History,
+  KeyRound, LoaderCircle, MemoryStick, PlugsConnected, Power, RefreshCcw, Rocket,
+  Server, ShieldCheck, Trash2, X,
 } from "@/lib/icons";
 import { FormEvent, useEffect, useState } from "react";
 import type { ActivityItem, Backup, BackupSchedule, Deployment, NovaApp, SystemMetrics } from "@/lib/types";
@@ -157,6 +158,43 @@ export function SettingsView({ telegram, openTelegram }: { telegram: { configure
         <article className="panel setting-card"><span><BellRing /></span><div><h3>اعلان‌ها</h3><p>مرکز تنظیم رخدادها و هشدارها</p><StatusBadge status="created" /></div><button className="button button--soft" disabled>به‌زودی</button></article>
       </div>
       <section className="panel security-note"><ShieldCheck /><div><h3>پیشنهاد امنیتی</h3><p>پنل را فقط پشت HTTPS استفاده کنید، دسترسی SSH را به کلید محدود کنید و از دایرکتوری <code>/var/lib/nova-server-manager</code> بکاپ خارج از سرور بگیرید.</p></div></section>
+    </>
+  );
+}
+
+export function DomainsView({ apps, navigate }: { apps: NovaApp[]; navigate: (route: string) => void }) {
+  const domains = apps.flatMap((app) => (app.domains || []).map((domain, index) => ({ app, domain, primary: index === 0 })));
+  return (
+    <>
+      <section className="section-hero"><div><span className="eyebrow"><Globe2 /> Nginx Host Routing</span><h2>دامنه‌های متصل</h2><p>همهٔ دامنه‌ها می‌توانند روی یک IP مشترک باشند؛ Nginx درخواست را بر اساس hostname به سرویس مقصد می‌فرستد.</p></div></section>
+      <section className="panel infrastructure-table">
+        <header><span>سرویس</span><span>دامنه</span><span>نوع</span><span>Upstream داخلی</span><span>وضعیت</span><i /></header>
+        {domains.map(({ app, domain, primary }) => <article key={`${app.id}-${domain}`}><div><AppGlyph type={app.app_type} /><p><strong>{app.display_name}</strong><small dir="ltr">{app.name}</small></p></div><code dir="ltr">{domain}</code><span>{primary ? "اصلی" : "Alias"}</span><code dir="ltr">127.0.0.1:{app.host_port}</code><StatusBadge status={app.status} /><button onClick={() => navigate(`app/${app.id}`)}><ExternalLink /></button></article>)}
+        {!domains.length && <EmptyState title="دامنه‌ای متصل نشده" text="از صفحهٔ هر سرویس وارد تب دامنه و SSL شوید." />}
+      </section>
+    </>
+  );
+}
+
+export function StorageView({ apps, navigate }: { apps: NovaApp[]; navigate: (route: string) => void }) {
+  return (
+    <>
+      <section className="section-hero"><div><span className="eyebrow"><HardDrive /> Persistent Storage</span><h2>مسیرهای دائمی</h2><p>سورس برنامه‌ها و volumeهای دیتابیس که با ساخت مجدد کانتینر حذف نمی‌شوند.</p></div></section>
+      <section className="infrastructure-cards">
+        {apps.map((app) => <article className="panel" key={app.id}><span><FolderOpen /></span><div><h3>{app.display_name}</h3><code dir="ltr">{app.source_dir}</code><p>{fa(app.source_files, 0)} فایل · {bytes(app.source_size)}</p>{app.volume_name && <small dir="ltr">Volume: {app.volume_name}</small>}</div><button className="button button--soft" onClick={() => navigate(`app/${app.id}`)}>مدیریت فایل‌ها</button></article>)}
+      </section>
+    </>
+  );
+}
+
+export function PortsView({ apps, navigate }: { apps: NovaApp[]; navigate: (route: string) => void }) {
+  return (
+    <>
+      <section className="section-hero"><div><span className="eyebrow"><PlugsConnected /> Port Mapping</span><h2>پورت و مسیریابی</h2><p>نگاشت امن پورت‌های کانتینر روی loopback میزبان.</p></div></section>
+      <section className="panel infrastructure-table infrastructure-table--ports">
+        <header><span>سرویس</span><span>پورت کانتینر</span><span>پورت میزبان</span><span>Bind address</span><span>دسترسی</span><i /></header>
+        {apps.map((app) => <article key={app.id}><div><AppGlyph type={app.app_type} /><p><strong>{app.display_name}</strong><small dir="ltr">{app.container_name}</small></p></div><code dir="ltr">{app.internal_port}/tcp</code><code dir="ltr">{app.host_port}</code><code dir="ltr">127.0.0.1</code><span>{app.domains?.length ? "از طریق Nginx" : "فقط محلی"}</span><button onClick={() => navigate(`app/${app.id}`)}><ExternalLink /></button></article>)}
+      </section>
     </>
   );
 }

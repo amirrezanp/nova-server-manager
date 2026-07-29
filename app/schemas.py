@@ -61,6 +61,7 @@ class AppUpdate(BaseModel):
 class DomainRequest(BaseModel):
     domain: str = Field(pattern=r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$")
     enable_ssl: bool = True
+    dns_mode: Literal["a", "cname", "wildcard"] = "cname"
 
 
 class FileSaveRequest(BaseModel):
@@ -76,6 +77,21 @@ class FileCreateRequest(BaseModel):
 class FileRenameRequest(BaseModel):
     old_path: str = Field(max_length=500)
     new_path: str = Field(max_length=500)
+
+
+class FileCopyRequest(BaseModel):
+    source_path: str = Field(max_length=500)
+    destination_path: str = Field(max_length=500)
+
+
+class FileArchiveRequest(BaseModel):
+    paths: list[str] = Field(min_length=1, max_length=500)
+    destination_path: str = Field(max_length=500)
+
+
+class FileExtractRequest(BaseModel):
+    archive_path: str = Field(max_length=500)
+    destination_path: str = Field(default="", max_length=500)
 
 
 class TelegramSettings(BaseModel):
@@ -102,3 +118,7 @@ class ServerActionRequest(BaseModel):
 
 class ContainerExecRequest(BaseModel):
     command: str = Field(min_length=1, max_length=1000)
+
+
+class DatabaseAdminRequest(BaseModel):
+    enabled: bool = True

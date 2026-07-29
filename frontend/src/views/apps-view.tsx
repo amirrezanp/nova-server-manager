@@ -116,39 +116,72 @@ export default function AppsView({
 }: { apps: NovaApp[]; navigate: (route: string) => void; onCreate: () => void }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
+  const [type, setType] = useState("all");
+  const [domainState, setDomainState] = useState("all");
+  const [sort, setSort] = useState("newest");
   const filtered = useMemo(() => apps.filter((app) => {
-    const matchesQuery = `${app.name} ${app.display_name} ${app.domain}`.toLowerCase().includes(query.toLowerCase());
-    return matchesQuery && (status === "all" || app.status === status);
-  }), [apps, query, status]);
+    const matchesQuery = `${app.name} ${app.display_name} ${(app.domains || []).join(" ")}`.toLowerCase().includes(query.toLowerCase());
+    const matchesDomain = domainState === "all" || (domainState === "connected" ? app.domains?.length : !app.domains?.length);
+    return matchesQuery && matchesDomain && (status === "all" || app.status === status) && (type === "all" || app.app_type === type);
+  }).sort((a, b) => {
+    if (sort === "name") return a.display_name.localeCompare(b.display_name, "fa");
+    if (sort === "usage") return (b.runtime?.memory_used || 0) - (a.runtime?.memory_used || 0);
+    return Date.parse(b.created_at) - Date.parse(a.created_at);
+  }), [apps, query, status, type, domainState, sort]);
+
+  function ResourceRing({ label, value, caption, percent }: { label: string; value: string; caption: string; percent: number }) {
+    const safe = Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 0));
+    return (
+      <div className="service-resource">
+        <div className="service-resource__ring" style={{ "--usage": `${safe * 3.6}deg` } as React.CSSProperties}>
+          <div><strong dir="ltr">{value}</strong><small dir="ltr">{caption}</small></div>
+        </div>
+        <span>{label}</span>
+      </div>
+    );
+  }
 
   return (
     <>
-      <section className="section-hero">
-        <div><span className="eyebrow"><Layers3 /> مدیریت سرویس‌ها</span><h2>برنامه‌های شما</h2><p>دیپلوی، منابع، دامنه و فایل‌های هر سرویس را یکپارچه مدیریت کنید.</p></div>
-        <button className="button button--primary button--large" onClick={onCreate}><Plus /> ساخت برنامه</button>
+      <section className="services-heading">
+        <div><span className="eyebrow"><Layers3 /> مرکز سرویس‌ها</span><h2>سرویس‌های شما</h2><p>منابع، دامنه‌ها، فایل‌ها و وضعیت اجرای همهٔ برنامه‌ها در یک نما</p></div>
+        <button className="button button--primary button--large" onClick={onCreate}><Plus /> ایجاد سرویس جدید</button>
       </section>
-      <section className="toolbar">
-        <label className="toolbar__search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="جست‌وجو در نام، دامنه یا شناسه..." /></label>
-        <label className="toolbar__filter"><Filter /><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">همه وضعیت‌ها</option><option value="running">در حال اجرا</option><option value="stopped">متوقف</option><option value="failed">دارای خطا</option></select></label>
-        <div className="toolbar__count"><Boxes /> {fa(filtered.length, 0)} برنامه</div>
+      <section className="service-filters panel">
+        <label className="toolbar__search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="جست‌وجوی سرویس یا دامنه..." /></label>
+        <label><select value={type} onChange={(event) => setType(event.target.value)}><option value="all">همهٔ پلتفرم‌ها</option>{appTypes.map((item) => <option key={item} value={item}>{typeLabels[item]}</option>)}</select></label>
+        <label><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">همهٔ وضعیت‌ها</option><option value="running">روشن</option><option value="stopped">متوقف</option><option value="failed">دارای خطا</option><option value="deploying">در حال دیپلوی</option></select></label>
+        <label><select value={domainState} onChange={(event) => setDomainState(event.target.value)}><option value="all">همهٔ دامنه‌ها</option><option value="connected">دامنه متصل</option><option value="empty">بدون دامنه</option></select></label>
+        <label><select value={sort} onChange={(event) => setSort(event.target.value)}><option value="newest">جدیدترین</option><option value="name">مرتب‌سازی نام</option><option value="usage">بیشترین مصرف RAM</option></select></label>
+        <button className="button button--soft"><Filter /> فیلتر <b>{fa(filtered.length, 0)}</b></button>
       </section>
       {filtered.length ? (
-        <section className="apps-grid">
+        <section className="service-stack">
           {filtered.map((app) => (
-            <article className="app-card" key={app.id} onClick={() => navigate(`app/${app.id}`)}>
-              <header><AppGlyph type={app.app_type} size="lg" /><div><h3>{app.display_name}</h3><p>{typeLabels[app.app_type]} · {app.name}</p></div><StatusBadge status={app.status} pulse={app.status === "running"} /></header>
-              <div className="app-card__address"><Globe2 /><span>{app.domain || `127.0.0.1:${app.host_port}`}</span></div>
-              <div className="app-card__facts">
-                <span><FileArchive /><b>{app.source_files ? `${fa(app.source_files, 0)} فایل` : "بدون سورس"}</b><small>{bytes(app.source_size)}</small></span>
-                <span><UploadCloud /><b>{app.last_upload_name || "آپلود نشده"}</b><small>{app.last_upload_at ? ago(app.last_upload_at) : "فایلی ثبت نشده"}</small></span>
-                <span><Server /><b>Port {app.internal_port}</b><small>Host {app.host_port}</small></span>
+            <article className="service-card" key={app.id} onClick={() => navigate(`app/${app.id}`)}>
+              <div className="service-card__state"><StatusBadge status={app.status} pulse={app.status === "running"} /></div>
+              <div className="service-card__identity">
+                <AppGlyph type={app.app_type} size="lg" />
+                <div><h3>{app.display_name}</h3><p dir="ltr">{app.name}</p><small>{typeLabels[app.app_type]}</small></div>
               </div>
-              <footer><span><Clock3 /> ایجاد {ago(app.created_at)}</span><button className="text-button">مدیریت برنامه <ArrowUpLeft /></button></footer>
+              <div className="service-card__resources">
+                <ResourceRing label="مصرف CPU" value={`${fa(app.runtime?.cpu_percent || 0, 1)}%`} caption="لحظه‌ای" percent={app.runtime?.cpu_percent || 0} />
+                <ResourceRing label="مصرف RAM" value={bytes(app.runtime?.memory_used || 0)} caption={app.runtime?.memory_limit ? `از ${bytes(app.runtime.memory_limit)}` : "بدون محدودیت"} percent={app.runtime?.memory_percent || 0} />
+                <ResourceRing label="Disk I/O" value={bytes((app.runtime?.block_read || 0) + (app.runtime?.block_write || 0))} caption={`سورس ${bytes(app.source_size)}`} percent={Math.min(100, app.source_size / (5 * 1024 ** 3) * 100)} />
+              </div>
+              <div className="service-card__endpoint">
+                <span><Globe2 /></span>
+                <div><small>{app.domains?.length ? `${fa(app.domains.length, 0)} دامنه متصل` : "آدرس داخلی"}</small><strong dir="ltr">{app.domains?.[0] || `127.0.0.1:${app.host_port}`}</strong></div>
+              </div>
+              <div className="service-card__action">
+                <button className="button button--soft" onClick={(event) => { event.stopPropagation(); navigate(`app/${app.id}`); }}>مشاهده جزئیات <ArrowUpLeft /></button>
+                <small><Clock3 /> به‌روزرسانی {ago(app.updated_at)}</small>
+              </div>
             </article>
           ))}
         </section>
       ) : (
-        <section className="panel"><EmptyState title="برنامه‌ای پیدا نشد" text={apps.length ? "فیلتر یا عبارت جست‌وجو را تغییر دهید." : "اولین برنامه را بسازید و سورس خود را آپلود کنید."} action={!apps.length && <button className="button button--primary" onClick={onCreate}><Plus /> ساخت اولین برنامه</button>} /></section>
+        <section className="panel"><EmptyState title="سرویسی پیدا نشد" text={apps.length ? "فیلتر یا عبارت جست‌وجو را تغییر دهید." : "اولین سرویس را بسازید و سورس خود را آپلود کنید."} action={!apps.length && <button className="button button--primary" onClick={onCreate}><Plus /> ساخت اولین سرویس</button>} /></section>
       )}
     </>
   );

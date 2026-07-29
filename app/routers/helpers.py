@@ -5,6 +5,13 @@ from app.models import App, Backup, BackupSchedule, Deployment, UploadRecord
 
 def app_dict(app: App, include_env: bool = False) -> dict:
     import json
+    from urllib.parse import quote
+    try:
+        domains = json.loads(app.domains_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        domains = []
+    if app.domain and app.domain not in domains:
+        domains.insert(0, app.domain)
     data = {
         "id": app.id,
         "name": app.name,
@@ -12,12 +19,15 @@ def app_dict(app: App, include_env: bool = False) -> dict:
         "app_type": app.app_type,
         "status": app.status,
         "domain": app.domain,
+        "domains": domains,
         "container_name": app.container_name,
         "image": app.image,
         "internal_port": app.internal_port,
         "host_port": app.host_port,
         "start_command": app.start_command,
         "source_dir": app.source_dir,
+        "volume_name": app.volume_name,
+        "database_admin_port": app.database_admin_port,
         "last_error": app.last_error,
         "last_upload_name": app.last_upload_name,
         "last_upload_size": app.last_upload_size,
@@ -29,7 +39,46 @@ def app_dict(app: App, include_env: bool = False) -> dict:
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
     }
     if include_env:
-        data["environment"] = json.loads(app.env_json or "{}")
+        environment = json.loads(app.env_json or "{}")
+        data["environment"] = environment
+        if app.app_type == "postgres":
+            username = environment.get("POSTGRES_USER", "nova")
+            password = environment.get("POSTGRES_PASSWORD", "")
+            database = environment.get("POSTGRES_DB", app.name.replace("-", "_"))
+            data["database"] = {
+                "engine": "PostgreSQL",
+                "host": "127.0.0.1",
+                "port": app.host_port,
+                "internal_host": app.container_name,
+                "internal_port": app.internal_port,
+                "database": database,
+                "username": username,
+                "password": password,
+                "uri": f"postgresql://{quote(username, safe='')}:{quote(password, safe='')}@127.0.0.1:{app.host_port}/{quote(database, safe='')}",
+                "internal_uri": f"postgresql://{quote(username, safe='')}:{quote(password, safe='')}@{app.container_name}:{app.internal_port}/{quote(database, safe='')}",
+                "volume": app.volume_name,
+                "admin_enabled": bool(app.database_admin_port),
+                "admin_url": f"/api/apps/{app.id}/database-admin/ui/" if app.database_admin_port else "",
+            }
+        elif app.app_type == "mongodb":
+            username = environment.get("MONGO_INITDB_ROOT_USERNAME", "nova")
+            password = environment.get("MONGO_INITDB_ROOT_PASSWORD", "")
+            database = environment.get("MONGO_INITDB_DATABASE", app.name.replace("-", "_"))
+            data["database"] = {
+                "engine": "MongoDB",
+                "host": "127.0.0.1",
+                "port": app.host_port,
+                "internal_host": app.container_name,
+                "internal_port": app.internal_port,
+                "database": database,
+                "username": username,
+                "password": password,
+                "uri": f"mongodb://{quote(username, safe='')}:{quote(password, safe='')}@127.0.0.1:{app.host_port}/{quote(database, safe='')}?authSource=admin",
+                "internal_uri": f"mongodb://{quote(username, safe='')}:{quote(password, safe='')}@{app.container_name}:{app.internal_port}/{quote(database, safe='')}?authSource=admin",
+                "volume": app.volume_name,
+                "admin_enabled": bool(app.database_admin_port),
+                "admin_url": f"/api/apps/{app.id}/database-admin/ui/" if app.database_admin_port else "",
+            }
     return data
 
 

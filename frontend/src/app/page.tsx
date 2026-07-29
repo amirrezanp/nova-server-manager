@@ -9,7 +9,8 @@ import AppsView from "@/views/apps-view";
 import AppDetailView from "@/views/app-detail-view";
 import DashboardView from "@/views/dashboard-view";
 import {
-  ActivityView, BackupsView, DeploymentsView, SettingsView, SystemView, TelegramModal,
+  ActivityView, BackupsView, DeploymentsView, DomainsView, PortsView, SettingsView,
+  StorageView, SystemView, TelegramModal,
 } from "@/views/operations-views";
 import { api, ApiError } from "@/lib/api";
 import type { ActivityItem, Deployment, NovaApp, SystemMetrics } from "@/lib/types";
@@ -104,9 +105,12 @@ export default function Home() {
       case "apps": return <AppsView apps={apps} navigate={navigate} onCreate={() => setCreateOpen(true)} />;
       case "app": {
         const id = Number(route.parts[1]);
-        return Number.isFinite(id) ? <AppDetailView appId={id} maxUpload={metrics.max_upload_bytes} navigate={navigate} notify={notify} refreshApps={refreshBase} /> : <AppsView apps={apps} navigate={navigate} onCreate={() => setCreateOpen(true)} />;
+        return Number.isFinite(id) ? <AppDetailView appId={id} maxUpload={metrics.max_upload_bytes} serverIp={metrics.primary_ip} navigate={navigate} notify={notify} refreshApps={refreshBase} /> : <AppsView apps={apps} navigate={navigate} onCreate={() => setCreateOpen(true)} />;
       }
       case "deployments": return <DeploymentsView apps={apps} deployments={deployments} />;
+      case "domains": return <DomainsView apps={apps} navigate={navigate} />;
+      case "storage": return <StorageView apps={apps} navigate={navigate} />;
+      case "ports": return <PortsView apps={apps} navigate={navigate} />;
       case "backups": return <BackupsView apps={apps} notify={notify} />;
       case "activity": return <ActivityView activity={activity} />;
       case "system": return <SystemView metrics={metrics} notify={notify} />;

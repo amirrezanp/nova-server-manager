@@ -6,6 +6,7 @@ import { IconProvider } from "@/components/icon-provider";
 export const metadata: Metadata = {
   title: "نوا سرور منیجر",
   description: "مرکز فرمان حرفه‌ای سرور و دیپلوی برنامه‌ها",
+  icons: { icon: "/icon.svg", shortcut: "/icon.svg", apple: "/icon.svg" },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

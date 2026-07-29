@@ -3,6 +3,8 @@ import os
 import secrets
 import socket
 import time
+import re
+from urllib.parse import quote
 from pathlib import Path
 from typing import Callable
 
@@ -284,6 +286,62 @@ def remove(app: App) -> CommandResult:
     return run_command(["docker", "rm", "-f", app.container_name], timeout=120)
 
 
+def database_admin_container(app: App) -> str:
+    return f"{app.container_name}-admin"
+
+
+def remove_database_admin(app: App) -> CommandResult:
+    return run_command(["docker", "rm", "-f", database_admin_container(app)], timeout=120)
+
+
+def configure_database_admin(app: App, enabled: bool) -> CommandResult:
+    if app.app_type not in {"postgres", "mongodb"}:
+        return CommandResult(False, "", "این سرویس دیتابیس قابل پشتیبانی نیست", 2)
+    remove_database_admin(app)
+    if not enabled:
+        return CommandResult(True, "", "", 0)
+    if not app.database_admin_port:
+        return CommandResult(False, "", "پورت مدیریت دیتابیس تعیین نشده است", 2)
+    network = ensure_network()
+    if not network.ok:
+        return network
+    environment = json.loads(app.env_json or "{}")
+    if app.app_type == "postgres":
+        args = [
+            "docker", "run", "-d", "--name", database_admin_container(app),
+            "--restart", "unless-stopped", "--network", NETWORK_NAME,
+            "-p", f"127.0.0.1:{app.database_admin_port}:8080",
+            "-e", f"ADMINER_DEFAULT_SERVER={app.container_name}",
+            "adminer:5-standalone",
+        ]
+    else:
+        username = quote(environment.get("MONGO_INITDB_ROOT_USERNAME", "nova"), safe="")
+        password = quote(environment.get("MONGO_INITDB_ROOT_PASSWORD", ""), safe="")
+        connection = (
+            f"mongodb://{username}:{password}@{app.container_name}:"
+            f"{app.internal_port}/?authSource=admin"
+        )
+        args = [
+            "docker", "run", "-d", "--name", database_admin_container(app),
+            "--restart", "unless-stopped", "--network", NETWORK_NAME,
+            "-p", f"127.0.0.1:{app.database_admin_port}:8081",
+            "-e", f"ME_CONFIG_MONGODB_URL={connection}",
+            "-e", "ME_CONFIG_BASICAUTH=false",
+            "mongo-express:1.0.2",
+        ]
+    return _verify_running(
+        SimpleAppProxy(database_admin_container(app)),
+        run_command(args, timeout=300),
+    )
+
+
+class SimpleAppProxy:
+    """Minimal container-shaped object used by the shared health verifier."""
+
+    def __init__(self, container_name: str):
+        self.container_name = container_name
+
+
 def inspect_status(app: App) -> str:
     result = run_command(
         ["docker", "inspect", "-f", "{{.State.Status}}", app.container_name],
@@ -314,11 +372,70 @@ def stats(app: App) -> dict:
         return {"cpu": "0%", "memory": "0 B", "network": "0 B", "block": "0 B"}
     try:
         raw = json.loads(result.stdout.strip().splitlines()[0])
-        return {
-            "cpu": raw.get("CPUPerc", "0%"),
-            "memory": raw.get("MemUsage", "0 B"),
-            "network": raw.get("NetIO", "0 B"),
-            "block": raw.get("BlockIO", "0 B"),
-        }
+        return _runtime_stats(raw)
     except json.JSONDecodeError:
         return {"cpu": "0%", "memory": "0 B", "network": "0 B", "block": "0 B"}
+
+
+def _size_to_bytes(value: str) -> float:
+    match = re.match(r"\s*([\d.]+)\s*([kmgtp]?i?b)?", value.lower())
+    if not match:
+        return 0
+    number = float(match.group(1))
+    unit = match.group(2) or "b"
+    powers = {
+        "b": 0, "kb": 1, "kib": 1, "mb": 2, "mib": 2,
+        "gb": 3, "gib": 3, "tb": 4, "tib": 4, "pb": 5, "pib": 5,
+    }
+    return number * (1024 ** powers.get(unit, 0))
+
+
+def _runtime_stats(raw: dict) -> dict:
+    memory_parts = [item.strip() for item in raw.get("MemUsage", "").split("/", 1)]
+    memory_used = _size_to_bytes(memory_parts[0]) if memory_parts else 0
+    memory_limit = _size_to_bytes(memory_parts[1]) if len(memory_parts) > 1 else 0
+    block_parts = [item.strip() for item in raw.get("BlockIO", "").split("/", 1)]
+    cpu_text = raw.get("CPUPerc", "0%")
+    try:
+        cpu_percent = float(cpu_text.rstrip("%"))
+    except ValueError:
+        cpu_percent = 0
+    return {
+        "cpu": cpu_text,
+        "cpu_percent": cpu_percent,
+        "memory": raw.get("MemUsage", "0 B"),
+        "memory_used": int(memory_used),
+        "memory_limit": int(memory_limit),
+        "memory_percent": round(memory_used / memory_limit * 100, 2) if memory_limit else 0,
+        "network": raw.get("NetIO", "0 B"),
+        "block": raw.get("BlockIO", "0 B"),
+        "block_read": int(_size_to_bytes(block_parts[0])) if block_parts else 0,
+        "block_write": int(_size_to_bytes(block_parts[1])) if len(block_parts) > 1 else 0,
+    }
+
+
+def stats_many(apps: list[App]) -> dict[str, dict]:
+    defaults = {
+        app.container_name: {
+            "cpu": "0%", "cpu_percent": 0, "memory": "0 B",
+            "memory_used": 0, "memory_limit": 0, "memory_percent": 0,
+            "network": "0 B", "block": "0 B", "block_read": 0, "block_write": 0,
+        }
+        for app in apps
+    }
+    if not apps:
+        return defaults
+    result = run_command(
+        ["docker", "stats", "--no-stream", "--format", "{{json .}}"], timeout=30
+    )
+    if not result.ok:
+        return defaults
+    for line in result.stdout.splitlines():
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        name = raw.get("Name") or raw.get("Container")
+        if name in defaults:
+            defaults[name] = _runtime_stats(raw)
+    return defaults

@@ -1,10 +1,11 @@
 import json
 import secrets
 import shutil
+import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.models import ActivityLog, App, Deployment, UploadRecord, User
 from app.routers.helpers import app_dict, deployment_dict, upload_dict
-from app.schemas import AppCreate, AppUpdate, ContainerExecRequest, DomainRequest
+from app.schemas import AppCreate, AppUpdate, ContainerExecRequest, DatabaseAdminRequest, DomainRequest
 from app.security import get_current_user
 from app.services import docker_service, proxy_service
 from app.services.file_service import directory_stats, extract_zip_safely
@@ -26,6 +27,16 @@ def _get_app(db: Session, app_id: int) -> App:
     if not app:
         raise HTTPException(404, "برنامه پیدا نشد")
     return app
+
+
+def _app_domains(app: App) -> list[str]:
+    try:
+        domains = json.loads(app.domains_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        domains = []
+    if app.domain and app.domain not in domains:
+        domains.insert(0, app.domain)
+    return list(dict.fromkeys(str(item).lower() for item in domains if item))
 
 
 def _deploy_background(app_id: int, deployment_id: int) -> None:
@@ -89,7 +100,13 @@ def list_apps(db: Session = Depends(get_db)):
         if mapped != app.status and app.status != "failed":
             app.status = mapped
     db.commit()
-    return [app_dict(app) for app in apps]
+    runtime = docker_service.stats_many(apps)
+    result = []
+    for app in apps:
+        data = app_dict(app)
+        data["runtime"] = runtime.get(app.container_name, {})
+        result.append(data)
+    return result
 
 
 @router.post("", status_code=201)
@@ -109,6 +126,7 @@ def create_app(payload: AppCreate, db: Session = Depends(get_db)):
     elif payload.app_type == "mongodb":
         environment.setdefault("MONGO_INITDB_ROOT_USERNAME", "nova")
         environment.setdefault("MONGO_INITDB_ROOT_PASSWORD", secrets.token_urlsafe(20))
+        environment.setdefault("MONGO_INITDB_DATABASE", payload.name.replace("-", "_"))
     app = App(
         name=payload.name,
         display_name=payload.display_name or payload.name,
@@ -359,26 +377,135 @@ def app_stats(app_id: int, db: Session = Depends(get_db)):
     return docker_service.stats(_get_app(db, app_id))
 
 
+@router.post("/{app_id}/database-admin")
+def database_admin(
+    app_id: int,
+    payload: DatabaseAdminRequest,
+    db: Session = Depends(get_db),
+):
+    app = _get_app(db, app_id)
+    if app.app_type not in {"postgres", "mongodb"}:
+        raise HTTPException(400, "این برنامه سرویس دیتابیس نیست")
+    old_port = app.database_admin_port
+    app.database_admin_port = (
+        (old_port or docker_service.allocate_port(20001, 30000))
+        if payload.enabled
+        else 0
+    )
+    result = docker_service.configure_database_admin(app, payload.enabled)
+    if not result.ok:
+        app.database_admin_port = old_port
+        db.commit()
+        raise HTTPException(500, result.stderr or result.stdout)
+    db.add(ActivityLog(
+        action="database_admin",
+        detail=f"{app.name}: {'enabled' if payload.enabled else 'disabled'}",
+    ))
+    db.commit()
+    return {
+        "ok": True,
+        "enabled": payload.enabled,
+        "port": app.database_admin_port,
+        "url": f"/api/apps/{app.id}/database-admin/ui/" if payload.enabled else "",
+    }
+
+
+@router.api_route(
+    "/{app_id}/database-admin/ui/{proxy_path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def database_admin_proxy(
+    app_id: int,
+    proxy_path: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    app = _get_app(db, app_id)
+    if not app.database_admin_port:
+        raise HTTPException(404, "پنل مدیریت دیتابیس فعال نیست")
+    target = f"http://127.0.0.1:{app.database_admin_port}/{proxy_path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    forwarded_headers = {
+        key: value for key, value in request.headers.items()
+        if key.lower() in {"content-type", "cookie", "accept", "accept-language", "user-agent"}
+    }
+    try:
+        async with httpx.AsyncClient(follow_redirects=False, timeout=60) as client:
+            upstream = await client.request(
+                request.method,
+                target,
+                headers=forwarded_headers,
+                content=await request.body(),
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, f"Database admin proxy unavailable: {exc}")
+    prefix = f"/api/apps/{app.id}/database-admin/ui/"
+    headers = {}
+    for key, value in upstream.headers.items():
+        lowered = key.lower()
+        if lowered in {"content-length", "content-encoding", "transfer-encoding", "connection", "set-cookie"}:
+            continue
+        if lowered == "location" and value.startswith("/"):
+            value = prefix + value.lstrip("/")
+        headers[key] = value
+    response = Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=headers,
+        media_type=upstream.headers.get("content-type"),
+    )
+    for cookie in upstream.headers.get_list("set-cookie"):
+        response.headers.append("set-cookie", cookie.replace("Path=/", f"Path={prefix}"))
+    return response
+
+
 @router.post("/{app_id}/domain")
 def set_domain(app_id: int, payload: DomainRequest, db: Session = Depends(get_db)):
     app = _get_app(db, app_id)
     if app.app_type in {"postgres", "mongodb"}:
         raise HTTPException(400, "دامنه HTTP به سرویس دیتابیس متصل نمی‌شود")
-    existing = db.scalar(select(App).where(App.domain == payload.domain, App.id != app.id))
-    if existing:
-        raise HTTPException(409, "این دامنه به برنامهٔ دیگری متصل است")
-    result = proxy_service.configure_domain(app, payload.domain, payload.enable_ssl)
+    domain = proxy_service.validate_domain(payload.domain)
+    for candidate in db.scalars(select(App).where(App.id != app.id)).all():
+        if domain in _app_domains(candidate):
+            raise HTTPException(409, "این دامنه به برنامهٔ دیگری متصل است")
+    domains = _app_domains(app)
+    if domain not in domains:
+        domains.append(domain)
+    result = proxy_service.configure_domains(app, domains, payload.enable_ssl)
     if not result.ok:
         raise HTTPException(500, result.stderr or result.stdout)
-    app.domain = payload.domain.lower()
-    db.add(ActivityLog(action="domain_set", detail=f"{app.name}: {app.domain}"))
+    app.domain = domains[0]
+    app.domains_json = json.dumps(domains)
+    db.add(ActivityLog(action="domain_set", detail=f"{app.name}: {domain} ({payload.dns_mode})"))
     db.commit()
-    return {"ok": True, "domain": app.domain}
+    return {
+        "ok": True,
+        "domain": app.domain,
+        "domains": domains,
+        "warning": result.stderr if result.stderr else "",
+    }
+
+
+@router.delete("/{app_id}/domain/{domain}")
+def delete_domain(app_id: int, domain: str, db: Session = Depends(get_db)):
+    app = _get_app(db, app_id)
+    domain = proxy_service.validate_domain(domain)
+    domains = [item for item in _app_domains(app) if item != domain]
+    result = proxy_service.configure_domains(app, domains, enable_ssl=False)
+    if not result.ok:
+        raise HTTPException(500, result.stderr or result.stdout)
+    app.domain = domains[0] if domains else ""
+    app.domains_json = json.dumps(domains)
+    db.add(ActivityLog(action="domain_remove", detail=f"{app.name}: {domain}"))
+    db.commit()
+    return {"ok": True, "domain": app.domain, "domains": domains}
 
 
 @router.delete("/{app_id}")
 def delete_app(app_id: int, delete_data: bool = False, db: Session = Depends(get_db)):
     app = _get_app(db, app_id)
+    docker_service.remove_database_admin(app)
     docker_service.remove(app)
     proxy_service.remove_domain(app)
     name = app.name

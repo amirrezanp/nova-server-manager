@@ -1,17 +1,18 @@
 "use client";
 
 import {
-  Activity, ArchiveRestore, ArrowRight, CheckCircle2, CircleStop, Clock3, Code2,
-  Copy, DatabaseBackup, Download, ExternalLink, File, FileArchive, FileCode2,
-  Folder, Globe2, HardDrive, History, LoaderCircle, MoreHorizontal, PackageCheck,
-  Play, Plus, RefreshCcw, Rocket, RotateCw, Save, Settings2, SquareTerminal,
+  Activity, ArchiveRestore, ArrowLineUp, ArrowRight, ArrowUpLeft, ArrowsOut, CheckCircle2, CircleStop, Clock3, Code2,
+  Cloud, Copy, Certificate, DatabaseBackup, Download, ExternalLink, Eye, EyeSlash, File, FileArchive, FileCode2,
+  FileZip, Folder, FolderOpen, Globe2, GridFour, HardDrive, History, LinkSimple, ListBullets, LoaderCircle, MoreHorizontal, PackageCheck,
+  PencilSimple, Play, Plus, RefreshCcw, Rocket, RotateCw, Save, Search, Settings2, SquareTerminal,
   Trash2, UploadCloud, X, Zap,
 } from "@/lib/icons";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Deployment, FileItem, NovaApp, UploadProgress, UploadRecord } from "@/lib/types";
 import { ago, bytes, dateTime, duration, fa, stageLabels, typeLabels } from "@/lib/format";
 import { api, uploadSource } from "@/lib/api";
 import { AppGlyph, EmptyState, Field, Modal, ProgressBar, StatusBadge } from "@/components/ui";
+import NovaCodeEditor from "@/components/code-editor";
 
 type Tab = "overview" | "source" | "deployments" | "logs" | "domain" | "settings";
 const tabs: Array<[Tab, string, typeof Activity]> = [
@@ -122,13 +123,36 @@ function UploadModal({
 }
 
 function OverviewTab({
-  app, uploads, deployments, stats, onUpload, onDeploy, onBackup,
+  app, uploads, deployments, stats, onUpload, onDeploy, onBackup, reload, notify,
 }: {
   app: NovaApp; uploads: UploadRecord[]; deployments: Deployment[];
   stats: Record<string, string>; onUpload: () => void; onDeploy: () => void; onBackup: () => void;
+  reload: () => Promise<void>;
+  notify: (message: string, kind?: "success" | "error" | "info") => void;
 }) {
   const lastUpload = uploads[0];
   const lastDeploy = deployments[0];
+  const [showPassword, setShowPassword] = useState(false);
+  const [adminBusy, setAdminBusy] = useState(false);
+  async function copyValue(value: string) {
+    await navigator.clipboard.writeText(value);
+    notify("در کلیپ‌بورد کپی شد");
+  }
+  async function toggleDatabaseAdmin(enabled: boolean) {
+    setAdminBusy(true);
+    try {
+      await api(`/api/apps/${app.id}/database-admin`, {
+        method: "POST",
+        body: { enabled },
+      });
+      await reload();
+      notify(enabled ? "پنل مدیریت دیتابیس فعال شد" : "پنل مدیریت دیتابیس غیرفعال شد");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تغییر وضعیت پنل دیتابیس ناموفق بود", "error");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
   return (
     <div className="app-overview">
       <section className="overview-main">
@@ -141,6 +165,55 @@ function OverviewTab({
             <div><span>Disk I/O</span><strong>{stats.block || "0 B"}</strong><small>خواندن / نوشتن</small></div>
           </div>
         </article>
+
+        {app.database && (
+          <article className="panel database-console">
+            <header className="panel__head"><div><h3>مشخصات اتصال دیتابیس</h3><p>اطلاعات دسترسی میزبان و شبکه خصوصی Docker</p></div><DatabaseBackup /></header>
+            <div className="database-console__grid">
+              <div><span>موتور دیتابیس</span><strong>{app.database.engine}</strong></div>
+              <div><span>Host</span><strong dir="ltr">{app.database.host}</strong><button onClick={() => copyValue(app.database!.host)}><Copy /></button></div>
+              <div><span>Public port</span><strong dir="ltr">{app.database.port}</strong><button onClick={() => copyValue(String(app.database!.port))}><Copy /></button></div>
+              <div><span>Database</span><strong dir="ltr">{app.database.database}</strong><button onClick={() => copyValue(app.database!.database)}><Copy /></button></div>
+              <div><span>Username</span><strong dir="ltr">{app.database.username}</strong><button onClick={() => copyValue(app.database!.username)}><Copy /></button></div>
+              <div><span>Password</span><strong dir="ltr">{showPassword ? app.database.password : "••••••••••••••••"}</strong><button onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeSlash /> : <Eye />}</button><button onClick={() => copyValue(app.database!.password)}><Copy /></button></div>
+              <div><span>Docker hostname</span><strong dir="ltr">{app.database.internal_host}</strong><button onClick={() => copyValue(app.database!.internal_host)}><Copy /></button></div>
+              <div><span>Persistent volume</span><strong dir="ltr">{app.database.volume}</strong><button onClick={() => copyValue(app.database!.volume)}><Copy /></button></div>
+            </div>
+            <div className="connection-string">
+              <div><span>Connection URI از روی سرور</span><code>{app.database.uri}</code></div>
+              <button className="button button--soft" onClick={() => copyValue(app.database!.uri)}><Copy /> کپی URI</button>
+            </div>
+            <div className="connection-string">
+              <div><span>Connection URI برای سایر کانتینرهای Nova</span><code>{app.database.internal_uri}</code></div>
+              <button className="button button--soft" onClick={() => copyValue(app.database!.internal_uri)}><Copy /> کپی URI داخلی</button>
+            </div>
+            <div className="database-security"><Zap /><p><strong>اتصال امن</strong><small>پورت دیتابیس فقط روی 127.0.0.1 منتشر شده است. برای اتصال از سیستم شخصی از SSH Tunnel استفاده کنید.</small></p><code dir="ltr">ssh -L {app.database.port}:127.0.0.1:{app.database.port} root@SERVER_IP</code></div>
+            <div className="database-sidecar">
+              <div>
+                <span><DatabaseBackup /></span>
+                <p>
+                  <strong>{app.database.engine === "PostgreSQL" ? "Adminer" : "Mongo Express"}</strong>
+                  <small>پنل وب مدیریت دیتابیس، فقط از مسیر احراز هویت‌شده Nova در دسترس است.</small>
+                </p>
+              </div>
+              <div className="database-sidecar__actions">
+                {app.database.admin_enabled && (
+                  <a className="button button--soft" href={app.database.admin_url} target="_blank" rel="noreferrer">
+                    <ExternalLink /> باز کردن پنل
+                  </a>
+                )}
+                <button
+                  className={`button ${app.database.admin_enabled ? "button--danger" : "button--primary"}`}
+                  disabled={adminBusy}
+                  onClick={() => toggleDatabaseAdmin(!app.database!.admin_enabled)}
+                >
+                  {adminBusy ? <LoaderCircle className="spin" /> : <Cloud />}
+                  {app.database.admin_enabled ? "غیرفعال‌سازی" : "فعال‌سازی پنل"}
+                </button>
+              </div>
+            </div>
+          </article>
+        )}
 
         <article className="panel">
           <header className="panel__head"><div><h3>آخرین نسخه سورس</h3><p>وضعیت فایل‌های آماده دیپلوی</p></div><button className="text-button" onClick={onUpload}><UploadCloud /> نسخه جدید</button></header>
@@ -187,20 +260,45 @@ function SourceTab({
   const [items, setItems] = useState<FileItem[]>([]);
   const [editor, setEditor] = useState<{ path: string; content: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"name" | "size" | "modified">("name");
+  const [view, setView] = useState<"list" | "grid">("list");
+  const [history, setHistory] = useState([""]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const uploadRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(async (nextPath = path) => {
+  const load = useCallback(async (nextPath: string) => {
     setLoading(true);
     try {
       const result = await api<{ path: string; items: FileItem[] }>(`/api/apps/${app.id}/files?path=${encodeURIComponent(nextPath)}`);
-      setPath(nextPath); setItems(result.items); setEditor(null);
+      setPath(result.path); setItems(result.items); setSelected([]);
     } catch (error) { notify(error instanceof Error ? error.message : "دریافت فایل‌ها ناموفق بود", "error"); }
     finally { setLoading(false); }
-  }, [app.id, notify, path]);
+  }, [app.id, notify]);
 
   useEffect(() => { void load(""); }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const visibleItems = useMemo(() => items
+    .filter((item) => item.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => {
+      if (a.directory !== b.directory) return a.directory ? -1 : 1;
+      if (sort === "size") return b.size - a.size;
+      if (sort === "modified") return b.modified - a.modified;
+      return a.name.localeCompare(b.name);
+    }), [items, query, sort]);
+
+  async function navigatePath(nextPath: string) {
+    await load(nextPath);
+    const nextHistory = [...history.slice(0, historyIndex + 1), nextPath];
+    setHistory(nextHistory); setHistoryIndex(nextHistory.length - 1);
+  }
+  async function travel(nextIndex: number) {
+    if (nextIndex < 0 || nextIndex >= history.length) return;
+    await load(history[nextIndex]); setHistoryIndex(nextIndex);
+  }
   async function open(item: FileItem) {
-    if (item.directory) return load(item.path);
+    if (item.directory) return navigatePath(item.path);
     try {
       const data = await api<{ path: string; content: string }>(`/api/apps/${app.id}/files/content?path=${encodeURIComponent(item.path)}`);
       setEditor(data);
@@ -213,9 +311,12 @@ function SourceTab({
       notify("فایل ذخیره شد");
     } catch (error) { notify(error instanceof Error ? error.message : "ذخیره ناموفق بود", "error"); }
   }
-  async function remove(item: FileItem) {
-    if (!confirm(`«${item.path}» حذف شود؟`)) return;
-    try { await api(`/api/apps/${app.id}/files?path=${encodeURIComponent(item.path)}`, { method: "DELETE" }); await load(); notify("فایل حذف شد"); }
+  async function removeSelected() {
+    if (!selected.length || !confirm(`${fa(selected.length, 0)} مورد انتخاب‌شده حذف شود؟`)) return;
+    try {
+      for (const item of selected) await api(`/api/apps/${app.id}/files?path=${encodeURIComponent(item)}`, { method: "DELETE" });
+      await load(path); notify("موارد انتخاب‌شده حذف شدند");
+    }
     catch (error) { notify(error instanceof Error ? error.message : "حذف ناموفق بود", "error"); }
   }
   async function create(directory: boolean) {
@@ -223,32 +324,109 @@ function SourceTab({
     if (!name || name.includes("/") || name.includes("\\")) return;
     try {
       await api(`/api/apps/${app.id}/files`, { method: "POST", body: { path: [path, name].filter(Boolean).join("/"), directory } as never });
-      await load(); notify(directory ? "پوشه ساخته شد" : "فایل ساخته شد");
+      await load(path); notify(directory ? "پوشه ساخته شد" : "فایل ساخته شد");
     } catch (error) { notify(error instanceof Error ? error.message : "ساخت ناموفق بود", "error"); }
+  }
+  async function renameOrMove(copy = false) {
+    if (selected.length !== 1) return notify("برای این عملیات دقیقاً یک فایل یا پوشه را انتخاب کنید", "error");
+    const source = selected[0];
+    const destination = prompt(copy ? "مسیر کپی جدید" : "نام یا مسیر جدید", source);
+    if (!destination || destination === source) return;
+    try {
+      await api(`/api/apps/${app.id}/files${copy ? "/copy" : ""}`, {
+        method: copy ? "POST" : "PATCH",
+        body: copy ? { source_path: source, destination_path: destination } : { old_path: source, new_path: destination } as never,
+      });
+      await load(path); notify(copy ? "کپی ساخته شد" : "فایل جابه‌جا/تغییرنام شد");
+    } catch (error) { notify(error instanceof Error ? error.message : "عملیات ناموفق بود", "error"); }
+  }
+  async function compress() {
+    if (!selected.length) return notify("حداقل یک مورد را انتخاب کنید", "error");
+    const destination = prompt("نام فایل ZIP", [path, "archive.zip"].filter(Boolean).join("/"));
+    if (!destination) return;
+    try {
+      await api(`/api/apps/${app.id}/files/compress`, { method: "POST", body: { paths: selected, destination_path: destination } as never });
+      await load(path); notify("فایل ZIP ساخته شد");
+    } catch (error) { notify(error instanceof Error ? error.message : "فشرده‌سازی ناموفق بود", "error"); }
+  }
+  async function extract() {
+    const item = items.find((candidate) => selected[0] === candidate.path);
+    if (selected.length !== 1 || item?.extension !== ".zip") return notify("یک فایل ZIP را انتخاب کنید", "error");
+    try {
+      await api(`/api/apps/${app.id}/files/extract`, { method: "POST", body: { archive_path: item.path, destination_path: path } as never });
+      await load(path); notify("فایل ZIP استخراج شد");
+    } catch (error) { notify(error instanceof Error ? error.message : "استخراج ناموفق بود", "error"); }
+  }
+  async function upload(files: FileList | null) {
+    if (!files?.length) return;
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData(); form.append("file", file);
+        await api(`/api/apps/${app.id}/files/upload?path=${encodeURIComponent(path)}`, { method: "POST", body: form });
+      }
+      await load(path); notify(`${fa(files.length, 0)} فایل آپلود شد`);
+    } catch (error) { notify(error instanceof Error ? error.message : "آپلود فایل ناموفق بود", "error"); }
+    finally { if (uploadRef.current) uploadRef.current.value = ""; }
+  }
+  function toggle(item: string) {
+    setSelected((current) => current.includes(item) ? current.filter((value) => value !== item) : [...current, item]);
+  }
+  function download() {
+    if (selected.length !== 1) return notify("یک فایل را برای دانلود انتخاب کنید", "error");
+    window.location.href = `/api/apps/${app.id}/files/download?path=${encodeURIComponent(selected[0])}`;
   }
 
   return (
-    <div className="source-layout">
-      <section className="panel file-browser">
-        <header className="file-browser__head"><div><h3>فایل‌های پروژه</h3><p dir="ltr">/{path}</p></div><div><button className="icon-button" onClick={() => create(false)} title="فایل جدید"><File /></button><button className="icon-button" onClick={() => create(true)} title="پوشه جدید"><Folder /></button><button className="icon-button" onClick={() => load()}><RefreshCcw /></button></div></header>
-        {path && <button className="file-row file-row--parent" onClick={() => load(path.split("/").slice(0, -1).join("/"))}><ArrowRight /><span>پوشه بالاتر</span></button>}
-        <div className="file-list">
-          {loading ? <div className="inline-loader"><LoaderCircle className="spin" /> در حال خواندن...</div> : items.map((item) => (
-            <div className="file-row" key={item.path}>
-              <button className="file-row__open" onClick={() => open(item)}>{item.directory ? <Folder /> : <FileCode2 />}<span><strong>{item.name}</strong><small>{item.directory ? "پوشه" : bytes(item.size)}</small></span></button>
-              <button className="file-row__delete" onClick={() => remove(item)}><Trash2 /></button>
+    <div className="file-manager-workspace">
+      <section className="panel file-manager">
+        <header className="file-manager__title"><div><span><FolderOpen /></span><div><h3>مدیریت فایل‌های پروژه</h3><p>{fa(items.length, 0)} مورد در مسیر فعلی</p></div></div><code dir="ltr">/app/{path}</code></header>
+        <div className="file-actions">
+          <button onClick={() => create(false)}><Plus /> فایل</button>
+          <button onClick={() => create(true)}><Plus /> پوشه</button>
+          <button onClick={() => uploadRef.current?.click()}><UploadCloud /> آپلود</button>
+          <input ref={uploadRef} type="file" multiple hidden onChange={(event) => void upload(event.target.files)} />
+          <i />
+          <button disabled={selected.length !== 1} onClick={download}><Download /> دانلود</button>
+          <button disabled={selected.length !== 1} onClick={() => renameOrMove(true)}><Copy /> کپی</button>
+          <button disabled={selected.length !== 1} onClick={() => renameOrMove(false)}><ArrowsOut /> انتقال</button>
+          <button disabled={!selected.length} className="danger" onClick={removeSelected}><Trash2 /> حذف</button>
+          <button disabled={selected.length !== 1} onClick={() => renameOrMove(false)}><PencilSimple /> تغییر نام</button>
+          <button disabled={selected.length !== 1 || items.find((item) => item.path === selected[0])?.extension !== ".zip"} onClick={extract}><ArrowsOut /> Extract</button>
+          <button disabled={!selected.length} onClick={compress}><FileZip /> Compress</button>
+        </div>
+        <div className="file-navigation">
+          <button disabled={historyIndex === 0} onClick={() => travel(historyIndex - 1)}><ArrowRight /> برگشت</button>
+          <button disabled={historyIndex >= history.length - 1} onClick={() => travel(historyIndex + 1)}>جلو <ArrowLineUp /></button>
+          <button onClick={() => load(path)}><RefreshCcw /> تازه‌سازی</button>
+          <div className="file-breadcrumb" dir="ltr"><button onClick={() => navigatePath("")}><FolderOpen /> Root</button>{path.split("/").filter(Boolean).map((part, index, parts) => <button key={`${part}-${index}`} onClick={() => navigatePath(parts.slice(0, index + 1).join("/"))}>/ {part}</button>)}</div>
+        </div>
+        <div className="file-table-tools">
+          <div><button className={view === "list" ? "active" : ""} onClick={() => setView("list")}><ListBullets /></button><button className={view === "grid" ? "active" : ""} onClick={() => setView("grid")}><GridFour /></button></div>
+          <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="name">مرتب‌سازی نام</option><option value="size">حجم</option><option value="modified">آخرین تغییر</option></select>
+          <label><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="فیلتر فایل‌ها..." /></label>
+          <span>{fa(items.filter((item) => !item.directory).length, 0)} فایل · {fa(items.filter((item) => item.directory).length, 0)} پوشه · {bytes(items.reduce((sum, item) => sum + item.size, 0))}</span>
+        </div>
+        {path && <button className="file-parent-row" onClick={() => navigatePath(path.split("/").slice(0, -1).join("/"))}><ArrowRight /><FolderOpen /> پوشه بالاتر</button>}
+        <div className={`file-table file-table--${view}`}>
+          {view === "list" && <div className="file-table__head"><input type="checkbox" checked={!!visibleItems.length && selected.length === visibleItems.length} onChange={(event) => setSelected(event.target.checked ? visibleItems.map((item) => item.path) : [])} /><span>نام</span><span>حجم</span><span>دسترسی</span><span>آخرین تغییر</span><i /></div>}
+          {loading ? <div className="inline-loader"><LoaderCircle className="spin" /> در حال خواندن فایل‌ها...</div> : visibleItems.map((item) => (
+            <div className={`file-entry ${selected.includes(item.path) ? "selected" : ""}`} key={item.path}>
+              <input type="checkbox" checked={selected.includes(item.path)} onChange={() => toggle(item.path)} />
+              <button className="file-entry__name" onDoubleClick={() => open(item)} onClick={() => toggle(item.path)}>{item.directory ? <Folder /> : item.extension === ".zip" ? <FileZip /> : <FileCode2 />}<strong dir="ltr">{item.name}</strong></button>
+              <span>{item.directory ? "—" : bytes(item.size)}</span>
+              <code>{item.permissions}</code>
+              <time>{new Date(item.modified * 1000).toLocaleString("fa-IR")}</time>
+              <button onClick={() => open(item)}>{item.directory ? <ArrowUpLeft /> : <PencilSimple />}</button>
             </div>
           ))}
-          {!loading && !items.length && <EmptyState title="پوشه خالی است" text="فایل یا پوشه جدید بسازید." />}
+          {!loading && !visibleItems.length && <EmptyState title="فایلی پیدا نشد" text={query ? "عبارت جست‌وجو را تغییر دهید." : "فایل یا پوشه جدید بسازید."} />}
         </div>
-      </section>
-      <section className="panel code-editor">
-        {editor ? <><header><div><Code2 /><span dir="ltr">{editor.path}</span></div><button className="button button--primary button--small" onClick={save}><Save /> ذخیره فایل</button></header><textarea dir="ltr" spellCheck={false} value={editor.content} onChange={(event) => setEditor({ ...editor, content: event.target.value })} /></> : <EmptyState title="ویرایشگر آماده است" text="یک فایل متنی را از فهرست انتخاب کنید." />}
       </section>
       <section className="panel upload-history-panel">
         <header className="panel__head"><div><h3>تاریخچه آپلود</h3><p>نسخه‌های دریافت‌شده از پنل</p></div></header>
         <div className="compact-history">{uploads.map((upload) => <div key={upload.id}><span><FileArchive /></span><p><strong>{upload.filename}</strong><small>{dateTime(upload.created_at)} · {fa(upload.files_extracted, 0)} فایل</small></p><b>{bytes(upload.size)}</b><StatusBadge status={upload.status} /></div>)}{!uploads.length && <EmptyState title="آپلودی ثبت نشده" text="پس از اولین آپلود، جزئیات اینجا باقی می‌ماند." />}</div>
       </section>
+      {editor && <Modal title={editor.path.split("/").pop() || editor.path} subtitle={editor.path} onClose={() => setEditor(null)} wide><div className="nova-editor-toolbar"><span><Code2 /> Syntax highlighting · UTF-8</span><div><button className="button button--ghost" onClick={() => setEditor(null)}>بستن</button><button className="button button--primary" onClick={save}><Save /> ثبت تغییرات</button></div></div><div className="nova-code-editor" dir="ltr"><NovaCodeEditor path={editor.path} value={editor.content} onChange={(content) => setEditor({ ...editor, content })} /></div><footer className="nova-editor-status"><span>Ln / Col توسط ادیتور</span><span>UTF-8 · Spaces</span></footer></Modal>}
     </div>
   );
 }
@@ -305,27 +483,71 @@ function LogsTab({ app, notify }: { app: NovaApp; notify: (text: string, kind?: 
   );
 }
 
-function DomainTab({ app, notify, reload }: { app: NovaApp; notify: (text: string, kind?: "success" | "error" | "info") => void; reload: () => void }) {
+function DomainTab({ app, serverIp, notify, reload }: { app: NovaApp; serverIp: string; notify: (text: string, kind?: "success" | "error" | "info") => void; reload: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"a" | "cname" | "wildcard">("cname");
+  const [target, setTarget] = useState("server.example.com");
+  const domains = app.domains || (app.domain ? [app.domain] : []);
+
+  async function copy(value: string) {
+    await navigator.clipboard.writeText(value);
+    notify("مقدار در کلیپ‌بورد کپی شد");
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true);
     const form = new FormData(event.currentTarget);
+    const wantsSsl = form.get("ssl") === "on";
     try {
-      await api(`/api/apps/${app.id}/domain`, { method: "POST", body: { domain: form.get("domain"), enable_ssl: form.get("ssl") === "on" } as never });
-      notify("دامنه و Reverse Proxy با موفقیت تنظیم شد"); reload();
+      const result = await api<{ warning?: string }>(`/api/apps/${app.id}/domain`, { method: "POST", body: { domain: form.get("domain"), enable_ssl: wantsSsl, dns_mode: mode } as never });
+      notify(result.warning ? "دامنه روی HTTP فعال شد؛ صدور SSL ناموفق بود و باید DNS بررسی شود." : wantsSsl ? "دامنه به Nginx اضافه و HTTPS فعال شد" : "دامنه روی HTTP فعال شد", result.warning ? "info" : "success"); reload();
     } catch (error) { notify(error instanceof Error ? error.message : "تنظیم دامنه ناموفق بود", "error"); }
     finally { setBusy(false); }
   }
+
+  async function remove(domain: string) {
+    if (!confirm(`دامنه ${domain} از این سرویس حذف شود؟`)) return;
+    try {
+      await api(`/api/apps/${app.id}/domain/${encodeURIComponent(domain)}`, { method: "DELETE" });
+      notify("دامنه حذف شد"); reload();
+    } catch (error) { notify(error instanceof Error ? error.message : "حذف دامنه ناموفق بود", "error"); }
+  }
+
+  const dnsValue = mode === "a" ? (serverIp || "SERVER_IP") : mode === "wildcard" ? (serverIp || "SERVER_IP") : target;
+  const dnsName = mode === "wildcard" ? "*.apps" : "app";
   return (
-    <div className="two-columns">
-      <section className="panel">
-        <header className="panel__head"><div><h3>اتصال دامنه</h3><p>Nginx Reverse Proxy و گواهی SSL</p></div><Globe2 /></header>
-        <div className="info-banner"><Zap /><p><strong>قبل از ادامه</strong><span>رکورد A دامنه باید به IP همین سرور اشاره کند.</span></p></div>
-        <form className="form" onSubmit={submit}><Field label="نام دامنه"><input name="domain" dir="ltr" defaultValue={app.domain} placeholder="app.example.com" required /></Field><label className="switch-field"><input name="ssl" type="checkbox" defaultChecked /><i /><span><strong>فعال‌سازی HTTPS</strong><small>دریافت خودکار Let’s Encrypt و Redirect</small></span></label><button className="button button--primary" disabled={busy}>{busy ? "در حال تنظیم..." : "اتصال دامنه"} <Globe2 /></button></form>
+    <div className="domain-workspace">
+      <section className="panel domain-connect">
+        <header className="panel__head"><div><h3>افزودن دامنه جدید</h3><p>هر تعداد دامنه را روی همین IP به سرویس متصل کنید</p></div><Globe2 /></header>
+        <div className="dns-mode-grid">
+          <button className={mode === "cname" ? "active" : ""} onClick={() => setMode("cname")}><LinkSimple /><strong>CNAME</strong><small>پیشنهادی برای چند سرویس</small></button>
+          <button className={mode === "a" ? "active" : ""} onClick={() => setMode("a")}><Cloud /><strong>A Record</strong><small>اتصال مستقیم به IP</small></button>
+          <button className={mode === "wildcard" ? "active" : ""} onClick={() => setMode("wildcard")}><Zap /><strong>Wildcard</strong><small>تمام زیردامنه‌ها با یک رکورد</small></button>
+        </div>
+        <div className="dns-recipe">
+          <div><span>Type</span><strong dir="ltr">{mode === "wildcard" ? "A" : mode.toUpperCase()}</strong></div>
+          <div><span>Name</span><strong dir="ltr">{dnsName}</strong></div>
+          <div><span>Value / Target</span><strong dir="ltr">{dnsValue}</strong><button onClick={() => copy(dnsValue)}><Copy /></button></div>
+        </div>
+        {mode === "cname" && <Field label="hostname اصلی سرور" hint={`این hostname باید یک‌بار با رکورد A به ${serverIp || "IP سرور"} متصل شود.`}><input dir="ltr" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="server.example.com" /></Field>}
+        <form className="form domain-form" onSubmit={submit}>
+          <Field label="دامنه کامل سرویس"><input name="domain" dir="ltr" placeholder="api.example.com" required /></Field>
+          <label className="switch-field"><input name="ssl" type="checkbox" defaultChecked /><i /><span><strong>فعال‌سازی HTTPS</strong><small>گواهی Let’s Encrypt و انتقال خودکار HTTP به HTTPS</small></span></label>
+          <button className="button button--primary" disabled={busy}>{busy ? "در حال بررسی DNS و Nginx..." : "افزودن دامنه"} <Globe2 /></button>
+        </form>
       </section>
-      <section className="panel traffic-flow">
-        <header className="panel__head"><h3>مسیر ترافیک</h3></header>
-        <div><span><Globe2 /></span><p><small>Public endpoint</small><strong dir="ltr">{app.domain ? `https://${app.domain}` : "تنظیم نشده"}</strong></p></div><i /><div><span><RefreshCcw /></span><p><small>Nginx proxy</small><strong>Port 80 / 443</strong></p></div><i /><div><span><BoxesIcon /></span><p><small>Application</small><strong dir="ltr">127.0.0.1:{app.host_port}</strong></p></div>
+      <section className="domain-side">
+        <article className="panel">
+          <header className="panel__head"><div><h3>دامنه‌های متصل</h3><p>{fa(domains.length, 0)} ورودی فعال برای این سرویس</p></div><Certificate /></header>
+          <div className="domain-list">
+            {domains.map((domain, index) => <div key={domain}><span><Globe2 /></span><p><strong dir="ltr">{domain}</strong><small>{index === 0 ? "دامنه اصلی" : "دامنه جایگزین"} · Nginx host routing</small></p><a href={`https://${domain}`} target="_blank"><ExternalLink /></a><button onClick={() => remove(domain)}><Trash2 /></button></div>)}
+            {!domains.length && <EmptyState title="دامنه‌ای متصل نیست" text="یک رکورد DNS بسازید و دامنه را از فرم کناری اضافه کنید." />}
+          </div>
+        </article>
+        <article className="panel traffic-flow">
+          <header className="panel__head"><h3>مسیر ترافیک</h3></header>
+          <div><span><Globe2 /></span><p><small>تمام دامنه‌های عمومی</small><strong dir="ltr">{domains[0] || "DNS pending"}</strong></p></div><i /><div><span><RefreshCcw /></span><p><small>Nginx host routing</small><strong>Ports 80 / 443</strong></p></div><i /><div><span><BoxesIcon /></span><p><small>Application container</small><strong dir="ltr">127.0.0.1:{app.host_port}</strong></p></div>
+        </article>
       </section>
     </div>
   );
@@ -358,9 +580,9 @@ function SettingsTab({ app, notify, reload, navigate }: { app: NovaApp; notify: 
 }
 
 export default function AppDetailView({
-  appId, maxUpload, navigate, notify, refreshApps,
+  appId, maxUpload, serverIp, navigate, notify, refreshApps,
 }: {
-  appId: number; maxUpload: number; navigate: (route: string) => void;
+  appId: number; maxUpload: number; serverIp: string; navigate: (route: string) => void;
   notify: (text: string, kind?: "success" | "error" | "info") => void;
   refreshApps: () => Promise<void>;
 }) {
@@ -423,11 +645,11 @@ export default function AppDetailView({
       </section>
       {app.last_error && <div className="error-banner"><X /><div><strong>آخرین عملیات ناموفق بود</strong><p>{app.last_error}</p></div></div>}
       <nav className="tabs">{tabs.map(([value, label, Icon]) => <button key={value} className={tab === value ? "active" : ""} onClick={() => setTab(value)}><Icon /> {label}</button>)}</nav>
-      {tab === "overview" && <OverviewTab app={app} uploads={uploads} deployments={deployments} stats={stats} onUpload={() => setUploadOpen(true)} onDeploy={deploy} onBackup={backup} />}
+      {tab === "overview" && <OverviewTab app={app} uploads={uploads} deployments={deployments} stats={stats} onUpload={() => setUploadOpen(true)} onDeploy={deploy} onBackup={backup} reload={load} notify={notify} />}
       {tab === "source" && <SourceTab app={app} uploads={uploads} notify={notify} />}
       {tab === "deployments" && <DeploymentsTab deployments={deployments} app={app} deploy={deploy} />}
       {tab === "logs" && <LogsTab app={app} notify={notify} />}
-      {tab === "domain" && <DomainTab app={app} notify={notify} reload={load} />}
+      {tab === "domain" && <DomainTab app={app} serverIp={serverIp} notify={notify} reload={load} />}
       {tab === "settings" && <SettingsTab app={app} notify={notify} reload={load} navigate={navigate} />}
       {uploadOpen && <UploadModal app={app} maxUpload={maxUpload} close={() => setUploadOpen(false)} notify={notify} completed={async () => { await load(); await refreshApps(); }} />}
     </>

@@ -15,6 +15,8 @@ os.environ["NOVA_SECRET_KEY"] = "test-key-that-is-long-enough-for-automated-test
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services import docker_service, proxy_service
+from app.services.common import CommandResult
 
 
 def make_zip(files: dict[str, str]) -> bytes:
@@ -147,3 +149,98 @@ def test_setup_cannot_run_twice():
             "password": "another-strong-password",
         })
         assert response.status_code == 409
+
+
+def test_multiple_domains_and_database_connection_details(monkeypatch):
+    monkeypatch.setattr(
+        proxy_service,
+        "configure_domains",
+        lambda app, domains, enable_ssl: CommandResult(True, "", "", 0),
+    )
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={
+            "username": "admin",
+            "password": "a-strong-test-password",
+        })
+        assert login.status_code == 200
+
+        created = client.post("/api/apps", json={
+            "name": "multi-domain-app",
+            "display_name": "Multi domain",
+            "app_type": "static",
+            "internal_port": 80,
+        })
+        assert created.status_code == 201, created.text
+        app_id = created.json()["id"]
+
+        for domain in ("app.example.com", "alias.example.net"):
+            response = client.post(f"/api/apps/{app_id}/domain", json={
+                "domain": domain,
+                "enable_ssl": False,
+                "dns_mode": "cname",
+            })
+            assert response.status_code == 200, response.text
+
+        detail = client.get(f"/api/apps/{app_id}").json()
+        assert detail["domain"] == "app.example.com"
+        assert detail["domains"] == ["app.example.com", "alias.example.net"]
+
+        removed = client.delete(f"/api/apps/{app_id}/domain/alias.example.net")
+        assert removed.status_code == 200
+        assert removed.json()["domains"] == ["app.example.com"]
+
+        database = client.post("/api/apps", json={
+            "name": "database-details",
+            "display_name": "Database",
+            "app_type": "postgres",
+            "internal_port": 3000,
+        })
+        assert database.status_code == 201, database.text
+        payload = database.json()["database"]
+        assert payload["engine"] == "PostgreSQL"
+        assert payload["internal_port"] == 5432
+        assert payload["username"] == "nova"
+        assert payload["password"]
+        assert payload["volume"] == "nova-database-details-data"
+        assert payload["internal_host"] == "nova-database-details"
+
+
+def test_database_admin_sidecar_lifecycle(monkeypatch):
+    monkeypatch.setattr(docker_service, "allocate_port", lambda *_args: 24567)
+    monkeypatch.setattr(
+        docker_service,
+        "configure_database_admin",
+        lambda app, enabled: CommandResult(True, "started" if enabled else "removed", "", 0),
+    )
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={
+            "username": "admin",
+            "password": "a-strong-test-password",
+        })
+        assert login.status_code == 200
+
+        created = client.post("/api/apps", json={
+            "name": "admin-panel-database",
+            "display_name": "Admin panel database",
+            "app_type": "mongodb",
+        })
+        assert created.status_code == 201, created.text
+        app_id = created.json()["id"]
+
+        enabled = client.post(
+            f"/api/apps/{app_id}/database-admin",
+            json={"enabled": True},
+        )
+        assert enabled.status_code == 200, enabled.text
+        assert enabled.json()["port"] == 24567
+        detail = client.get(f"/api/apps/{app_id}").json()
+        assert detail["database"]["admin_enabled"] is True
+        assert detail["database"]["admin_url"].endswith("/database-admin/ui/")
+
+        disabled = client.post(
+            f"/api/apps/{app_id}/database-admin",
+            json={"enabled": False},
+        )
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["port"] == 0
+        assert client.get(f"/api/apps/{app_id}").json()["database"]["admin_enabled"] is False

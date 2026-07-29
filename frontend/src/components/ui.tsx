@@ -3,6 +3,10 @@
 import { Check, X, LoaderCircle, PackageOpen } from "@/lib/icons";
 import { ReactNode, useEffect } from "react";
 import { statusLabels, typeLabels } from "@/lib/format";
+import {
+  SiDjango, SiDocker, SiFastapi, SiFlask, SiHtml5, SiMongodb,
+  SiNextdotjs, SiNodedotjs, SiPhp, SiPostgresql,
+} from "react-icons/si";
 
 export function Logo({ compact = false }: { compact?: boolean }) {
   return (
@@ -24,7 +28,13 @@ export function StatusBadge({ status, pulse = false }: { status: string; pulse?:
 
 export function AppGlyph({ type, size = "md" }: { type: string; size?: "sm" | "md" | "lg" }) {
   const value = typeLabels[type] || type;
-  return <div className={`app-glyph app-glyph--${size} app-glyph--${type}`}>{value.slice(0, 3).toUpperCase()}</div>;
+  const icons: Record<string, ReactNode> = {
+    nextjs: <SiNextdotjs />, nodejs: <SiNodedotjs />, django: <SiDjango />,
+    fastapi: <SiFastapi />, flask: <SiFlask />, php: <SiPhp />,
+    static: <SiHtml5 />, postgres: <SiPostgresql />, mongodb: <SiMongodb />,
+    docker: <SiDocker />,
+  };
+  return <div className={`app-glyph app-glyph--${size} app-glyph--${type}`} title={value}>{icons[type] || value.slice(0, 3).toUpperCase()}</div>;
 }
 
 export function Modal({

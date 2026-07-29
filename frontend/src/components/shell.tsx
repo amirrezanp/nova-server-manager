@@ -2,18 +2,21 @@
 
 import {
   Activity, ArchiveRestore, Bell, Boxes, ChevronLeft, Command, DatabaseBackup,
-  LayoutDashboard, LogOut, Menu, Rocket, Search, Server, Settings, X,
+  Globe2, HardDrive, LayoutDashboard, LogOut, Menu, PlugsConnected, Rocket, Search, Server, Settings, X,
 } from "@/lib/icons";
 import { ReactNode, useEffect, useState } from "react";
 import { Logo } from "./ui";
 import type { NovaApp, SystemMetrics } from "@/lib/types";
 
-export type RouteName = "dashboard" | "apps" | "app" | "deployments" | "backups" | "activity" | "system" | "settings";
+export type RouteName = "dashboard" | "apps" | "app" | "deployments" | "domains" | "storage" | "ports" | "backups" | "activity" | "system" | "settings";
 
 const navigation: Array<{ route: RouteName; label: string; icon: typeof LayoutDashboard }> = [
   { route: "dashboard", label: "نمای کلی", icon: LayoutDashboard },
   { route: "apps", label: "برنامه‌ها", icon: Boxes },
   { route: "deployments", label: "دیپلوی‌ها", icon: Rocket },
+  { route: "domains", label: "دامنه‌ها", icon: Globe2 },
+  { route: "storage", label: "مسیرهای دائمی", icon: HardDrive },
+  { route: "ports", label: "پورت و مسیریابی", icon: PlugsConnected },
   { route: "backups", label: "بکاپ و بازیابی", icon: DatabaseBackup },
   { route: "activity", label: "گزارش فعالیت", icon: Activity },
   { route: "system", label: "وضعیت سرور", icon: Server },
@@ -25,6 +28,9 @@ const titles: Record<RouteName, [string, string]> = {
   apps: ["برنامه‌ها", "مدیریت سرویس‌ها و منابع"],
   app: ["مدیریت برنامه", "تنظیمات، فایل‌ها و عملیات سرویس"],
   deployments: ["دیپلوی‌ها", "تاریخچه و وضعیت انتشارها"],
+  domains: ["دامنه‌ها", "Host routing و گواهی‌های سرویس‌ها"],
+  storage: ["فضای دائمی", "Volumeها، سورس‌ها و مصرف ذخیره‌سازی"],
+  ports: ["پورت و مسیریابی", "نگاشت پورت کانتینرها روی میزبان"],
   backups: ["بکاپ و بازیابی", "نسخه‌های پشتیبان و زمان‌بندی"],
   activity: ["گزارش فعالیت", "رویدادهای مدیریتی سیستم"],
   system: ["وضعیت سرور", "منابع و سلامت زیرساخت"],

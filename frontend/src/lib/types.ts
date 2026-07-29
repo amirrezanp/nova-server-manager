@@ -7,14 +7,19 @@ export interface NovaApp {
   app_type: string;
   status: AppStatus | string;
   domain: string;
+  domains: string[];
   container_name: string;
   image: string;
   internal_port: number;
   host_port: number;
   start_command: string;
   source_dir: string;
+  volume_name: string;
+  database_admin_port: number;
   last_error: string;
   environment?: Record<string, string>;
+  database?: DatabaseConnection;
+  runtime?: ContainerRuntime;
   last_upload_name: string;
   last_upload_size: number;
   last_upload_at: string | null;
@@ -23,6 +28,35 @@ export interface NovaApp {
   last_deployed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ContainerRuntime {
+  cpu: string;
+  cpu_percent: number;
+  memory: string;
+  memory_used: number;
+  memory_limit: number;
+  memory_percent: number;
+  network: string;
+  block: string;
+  block_read: number;
+  block_write: number;
+}
+
+export interface DatabaseConnection {
+  engine: string;
+  host: string;
+  port: number;
+  internal_host: string;
+  internal_port: number;
+  database: string;
+  username: string;
+  password: string;
+  uri: string;
+  internal_uri: string;
+  volume: string;
+  admin_enabled: boolean;
+  admin_url: string;
 }
 
 export interface SystemMetrics {
@@ -39,6 +73,8 @@ export interface SystemMetrics {
   load: number[];
   uptime_seconds: number;
   hostname: string;
+  ip_addresses: string[];
+  primary_ip: string;
   os: string;
   docker: boolean;
   nginx: boolean;
@@ -109,6 +145,8 @@ export interface FileItem {
   directory: boolean;
   size: number;
   modified: number;
+  permissions: string;
+  extension: string;
 }
 
 export interface UploadProgress {
@@ -120,4 +158,3 @@ export interface UploadProgress {
   eta: number | null;
   phase: "uploading" | "processing" | "completed" | "failed";
 }
-

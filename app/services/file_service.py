@@ -1,4 +1,5 @@
 import shutil
+import stat as stat_module
 import zipfile
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def list_directory(root: Path, relative: str = "") -> dict:
             "directory": item.is_dir(),
             "size": stat.st_size if item.is_file() else 0,
             "modified": stat.st_mtime,
+            "permissions": stat_module.filemode(stat.st_mode),
+            "extension": item.suffix.lower(),
         })
     return {"path": str(target.relative_to(root)).replace("\\", "/") if target != root else "", "items": items}
 
@@ -82,6 +85,61 @@ def rename_item(root: Path, old_relative: str, new_relative: str) -> None:
         raise FileExistsError("نام مقصد وجود دارد")
     new.parent.mkdir(parents=True, exist_ok=True)
     old.rename(new)
+
+
+def copy_item(root: Path, source_relative: str, destination_relative: str) -> None:
+    source = resolve_safe(root, source_relative)
+    destination = resolve_safe(root, destination_relative)
+    if not source.exists():
+        raise FileNotFoundError("فایل مبدأ پیدا نشد")
+    if source.is_symlink():
+        raise ValueError("کپی پیوند نمادین مجاز نیست")
+    if destination.exists():
+        raise FileExistsError("مسیر مقصد از قبل وجود دارد")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir():
+        if any(item.is_symlink() for item in source.rglob("*")):
+            raise ValueError("پوشه دارای پیوند نمادین و غیرقابل کپی است")
+        shutil.copytree(source, destination)
+    else:
+        shutil.copy2(source, destination)
+
+
+def create_archive(root: Path, paths: list[str], destination_relative: str) -> Path:
+    destination = resolve_safe(root, destination_relative)
+    if destination.suffix.lower() != ".zip":
+        raise ValueError("نام فایل فشرده باید با .zip تمام شود")
+    if destination.exists():
+        raise FileExistsError("فایل فشرده مقصد از قبل وجود دارد")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    sources = [resolve_safe(root, item) for item in paths]
+    if any(not item.exists() for item in sources):
+        raise FileNotFoundError("یکی از فایل‌های انتخاب‌شده پیدا نشد")
+    try:
+        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for source in sources:
+                candidates = source.rglob("*") if source.is_dir() else [source]
+                for item in candidates:
+                    if item.is_symlink():
+                        raise ValueError("فشرده‌سازی پیوند نمادین مجاز نیست")
+                    if item.is_file():
+                        archive.write(item, item.relative_to(root))
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return destination
+
+
+def extract_archive(root: Path, archive_relative: str, destination_relative: str = "") -> None:
+    archive = resolve_safe(root, archive_relative)
+    destination = resolve_safe(root, destination_relative)
+    if not archive.is_file() or archive.suffix.lower() != ".zip":
+        raise ValueError("فایل ZIP معتبر انتخاب نشده است")
+    destination.mkdir(parents=True, exist_ok=True)
+    try:
+        extract_zip_safely(archive, destination)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("فایل ZIP خراب یا نامعتبر است") from exc
 
 
 def extract_zip_safely(archive: Path, destination: Path) -> None:
