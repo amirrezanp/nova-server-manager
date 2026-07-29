@@ -2,8 +2,8 @@
 
 import {
   Activity, AlertTriangle, ArchiveRestore, BellRing, Bot, CheckCircle2, Clock3,
-  Cpu, DatabaseBackup, Download, ExternalLink, FolderOpen, Globe2, HardDrive, History,
-  KeyRound, LoaderCircle, MemoryStick, PlugsConnected, Power, RefreshCcw, Rocket,
+  CircleStop, Cpu, DatabaseBackup, Download, ExternalLink, FolderOpen, Globe2, HardDrive, History,
+  KeyRound, LoaderCircle, MemoryStick, PencilSimple, Play, PlugsConnected, Power, RefreshCcw, Rocket,
   Server, ShieldCheck, Trash2, X,
 } from "@/lib/icons";
 import { FormEvent, useEffect, useState } from "react";
@@ -46,18 +46,50 @@ export function DeploymentsView({ apps, deployments }: { apps: NovaApp[]; deploy
   );
 }
 
-function ScheduleModal({ apps, close, saved }: { apps: NovaApp[]; close: () => void; saved: () => void }) {
+function ScheduleModal({
+  apps, schedule, close, saved,
+}: {
+  apps: NovaApp[];
+  schedule?: BackupSchedule | null;
+  close: () => void;
+  saved: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); const form = new FormData(event.currentTarget);
-    await api("/api/backups/schedules", { method: "POST", body: {
-      app_id: Number(form.get("app_id")), enabled: true, destination: form.get("destination"),
-      interval_value: Number(form.get("interval_value")), interval_unit: form.get("interval_unit"),
-      retention: Number(form.get("retention")),
-    } as never });
-    saved(); close();
+    try {
+      await api(schedule ? `/api/backups/schedules/${schedule.id}` : "/api/backups/schedules", {
+        method: schedule ? "PUT" : "POST",
+        body: {
+          app_id: Number(form.get("app_id")),
+          enabled: schedule?.enabled ?? true,
+          destination: form.get("destination"),
+          interval_value: Number(form.get("interval_value")),
+          interval_unit: form.get("interval_unit"),
+          retention: Number(form.get("retention")),
+        },
+      });
+      saved(); close();
+    } finally {
+      setBusy(false);
+    }
   }
-  return <Modal title="زمان‌بندی بکاپ" subtitle="نسخه‌های پشتیبان را به‌صورت خودکار ایجاد کنید." onClose={close}><form className="form" onSubmit={submit}><Field label="برنامه"><select name="app_id">{apps.map((app) => <option key={app.id} value={app.id}>{app.display_name}</option>)}</select></Field><div className="form-grid"><Field label="فاصله اجرا"><input name="interval_value" type="number" min={1} defaultValue={24} /></Field><Field label="واحد"><select name="interval_unit"><option value="hours">ساعت</option><option value="days">روز</option><option value="minutes">دقیقه</option></select></Field></div><div className="form-grid"><Field label="مقصد"><select name="destination"><option value="local">روی سرور</option><option value="telegram">تلگرام</option></select></Field><Field label="تعداد نگه‌داری"><input name="retention" type="number" min={1} max={100} defaultValue={7} /></Field></div><div className="modal__actions"><button type="button" className="button button--ghost" onClick={close}>انصراف</button><button className="button button--primary" disabled={busy}>ساخت زمان‌بندی</button></div></form></Modal>;
+  return (
+    <Modal title={schedule ? "ویرایش زمان‌بندی" : "زمان‌بندی بکاپ"} subtitle="نسخه‌های پشتیبان را به‌صورت خودکار ایجاد کنید." onClose={close}>
+      <form className="form" onSubmit={submit}>
+        <Field label="برنامه"><select name="app_id" defaultValue={schedule?.app_id}>{apps.map((app) => <option key={app.id} value={app.id}>{app.display_name}</option>)}</select></Field>
+        <div className="form-grid">
+          <Field label="فاصله اجرا"><input name="interval_value" type="number" min={1} defaultValue={schedule?.interval_value ?? 24} /></Field>
+          <Field label="واحد"><select name="interval_unit" defaultValue={schedule?.interval_unit || "hours"}><option value="hours">ساعت</option><option value="days">روز</option><option value="minutes">دقیقه</option></select></Field>
+        </div>
+        <div className="form-grid">
+          <Field label="مقصد"><select name="destination" defaultValue={schedule?.destination || "local"}><option value="local">روی سرور</option><option value="telegram">تلگرام</option></select></Field>
+          <Field label="تعداد نگه‌داری"><input name="retention" type="number" min={1} max={100} defaultValue={schedule?.retention ?? 7} /></Field>
+        </div>
+        <div className="modal__actions"><button type="button" className="button button--ghost" onClick={close}>انصراف</button><button className="button button--primary" disabled={busy}>{busy ? "در حال ذخیره..." : schedule ? "ذخیره تغییرات" : "ساخت زمان‌بندی"}</button></div>
+      </form>
+    </Modal>
+  );
 }
 
 function TelegramModal({ close, saved }: { close: () => void; saved: () => void }) {
@@ -70,13 +102,50 @@ function TelegramModal({ close, saved }: { close: () => void; saved: () => void 
   return <Modal title="اتصال ربات تلگرام" subtitle="برای ارسال خودکار بکاپ‌ها" onClose={close}><form className="form" onSubmit={submit}><div className="info-banner"><Bot /><p><strong>راهنمای سریع</strong><span>در BotFather ربات بسازید، یک پیام به آن بفرستید و سپس Token و Chat ID عددی را وارد کنید.</span></p></div><Field label="Bot Token"><input name="token" dir="ltr" type="password" placeholder="123456:ABC..." required /></Field><Field label="Admin Chat ID"><input name="chat_id" dir="ltr" placeholder="123456789" required /></Field>{error && <div className="form-error">{error}</div>}<div className="modal__actions"><button type="button" className="button button--ghost" onClick={close}>انصراف</button><button className="button button--primary" disabled={busy}>{busy ? "در حال بررسی..." : "اتصال ربات"}</button></div></form></Modal>;
 }
 
+function QuickBackupModal({
+  apps, close, create,
+}: {
+  apps: NovaApp[];
+  close: () => void;
+  create: (appId: number, destination: "local" | "telegram") => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      await create(
+        Number(form.get("app_id")),
+        String(form.get("destination")) as "local" | "telegram",
+      );
+      close();
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal title="ایجاد بکاپ فوری" subtitle="سرویس و مقصد نسخه پشتیبان را انتخاب کنید." onClose={close}>
+      <form className="form" onSubmit={submit}>
+        <Field label="سرویس"><select name="app_id">{apps.map((app) => <option key={app.id} value={app.id}>{app.display_name} · {app.name}</option>)}</select></Field>
+        <Field label="مقصد"><select name="destination"><option value="local">ذخیره روی سرور</option><option value="telegram">ارسال در تلگرام</option></select></Field>
+        <div className="info-banner"><DatabaseBackup /><p><strong>بکاپ کامل</strong><span>سورس برنامه، Manifest و در سرویس‌های دیتابیس فایل Dump ذخیره می‌شود.</span></p></div>
+        <div className="modal__actions"><button type="button" className="button button--ghost" onClick={close}>انصراف</button><button className="button button--primary" disabled={busy}>{busy ? "در حال شروع..." : "ایجاد بکاپ"}</button></div>
+      </form>
+    </Modal>
+  );
+}
+
 export function BackupsView({
   apps, notify,
 }: { apps: NovaApp[]; notify: (text: string, kind?: "success" | "error" | "info") => void }) {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [schedules, setSchedules] = useState<BackupSchedule[]>([]);
   const [telegram, setTelegram] = useState<{ configured: boolean; chat_id: string; token_hint: string }>({ configured: false, chat_id: "", token_hint: "" });
-  const [scheduleOpen, setScheduleOpen] = useState(false); const [telegramOpen, setTelegramOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<BackupSchedule | null>(null);
+  const [telegramOpen, setTelegramOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   async function load() {
     const [backupData, scheduleData, telegramData] = await Promise.all([
       api<Backup[]>("/api/backups"), api<BackupSchedule[]>("/api/backups/schedules/all"),
@@ -101,24 +170,72 @@ export function BackupsView({
     try { await api("/api/settings/telegram/test", { method: "POST" }); notify("پیام آزمایشی ارسال شد"); }
     catch (error) { notify(error instanceof Error ? error.message : "ارسال ناموفق بود", "error"); }
   }
+  async function toggleSchedule(item: BackupSchedule) {
+    try {
+      await api(`/api/backups/schedules/${item.id}`, {
+        method: "PUT",
+        body: {
+          app_id: item.app_id,
+          enabled: !item.enabled,
+          destination: item.destination,
+          interval_value: item.interval_value,
+          interval_unit: item.interval_unit,
+          retention: item.retention,
+        },
+      });
+      await load();
+      notify(item.enabled ? "زمان‌بندی موقتاً متوقف شد" : "زمان‌بندی دوباره فعال شد");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تغییر وضعیت زمان‌بندی ناموفق بود", "error");
+    }
+  }
+  async function removeSchedule(item: BackupSchedule) {
+    if (!confirm(`زمان‌بندی بکاپ ${apps.find((app) => app.id === item.app_id)?.display_name || ""} حذف شود؟`)) return;
+    try {
+      await api(`/api/backups/schedules/${item.id}`, { method: "DELETE" });
+      await load();
+      notify("زمان‌بندی حذف شد");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "حذف زمان‌بندی ناموفق بود", "error");
+    }
+  }
   const totalSize = backups.reduce((sum, item) => sum + item.size, 0);
   return (
     <>
-      <section className="section-hero"><div><span className="eyebrow"><DatabaseBackup /> حفاظت از داده‌ها</span><h2>بکاپ و بازیابی</h2><p>نسخه‌های محلی، ارسال تلگرام و زمان‌بندی نگه‌داری.</p></div><button className="button button--primary" disabled={!apps.length} onClick={() => apps[0] && create(apps[0].id, "local")}><DatabaseBackup /> بکاپ سریع</button></section>
+      <section className="section-hero"><div><span className="eyebrow"><DatabaseBackup /> حفاظت از داده‌ها</span><h2>بکاپ و بازیابی</h2><p>نسخه‌های محلی، ارسال تلگرام و زمان‌بندی نگه‌داری.</p></div><button className="button button--primary" disabled={!apps.length} onClick={() => setQuickOpen(true)}><DatabaseBackup /> بکاپ سریع</button></section>
       <section className="backup-top">
         <article className="panel backup-summary"><span><ArchiveRestore /></span><div><small>فضای مصرف‌شده بکاپ</small><strong>{bytes(totalSize)}</strong><p>{fa(backups.length, 0)} نسخه پشتیبان</p></div></article>
         <article className="panel integration-card"><span className={telegram.configured ? "connected" : ""}><Bot /></span><div><small>یکپارچه‌سازی تلگرام</small><strong>{telegram.configured ? "متصل و آماده" : "تنظیم نشده"}</strong><p>{telegram.configured ? `Chat ID: ${telegram.chat_id} · ${telegram.token_hint}` : "ارسال مستقیم بکاپ به مدیر"}</p></div><button className="button button--soft" onClick={() => setTelegramOpen(true)}>{telegram.configured ? "ویرایش" : "اتصال"}</button>{telegram.configured && <button className="text-button" onClick={testTelegram}>تست</button>}</article>
       </section>
       <section className="panel schedules">
         <header className="panel__head"><div><h3>زمان‌بندی خودکار</h3><p>بکاپ دوره‌ای و حذف نسخه‌های قدیمی</p></div><button className="button button--soft" onClick={() => setScheduleOpen(true)}>زمان‌بندی جدید</button></header>
-        <div className="schedule-grid">{schedules.map((item) => { const app = apps.find((candidate) => candidate.id === item.app_id); return <div key={item.id}><AppGlyph type={app?.app_type || "docker"} /><p><strong>{app?.display_name || "برنامه حذف‌شده"}</strong><small>هر {fa(item.interval_value, 0)} {item.interval_unit === "days" ? "روز" : item.interval_unit === "hours" ? "ساعت" : "دقیقه"} · {item.destination === "telegram" ? "تلگرام" : "سرور"}</small></p><span><Clock3 /> اجرای بعدی: {dateTime(item.next_run)}</span><StatusBadge status={item.enabled ? "running" : "stopped"} /></div>; })}{!schedules.length && <EmptyState title="زمان‌بندی ندارید" text="برای حفاظت پیوسته از برنامه‌ها یک برنامه بکاپ بسازید." />}</div>
+        <div className="schedule-grid">
+          {schedules.map((item) => {
+            const app = apps.find((candidate) => candidate.id === item.app_id);
+            return (
+              <div key={item.id} className={!item.enabled ? "is-paused" : ""}>
+                <AppGlyph type={app?.app_type || "docker"} />
+                <p><strong>{app?.display_name || "برنامه حذف‌شده"}</strong><small>هر {fa(item.interval_value, 0)} {item.interval_unit === "days" ? "روز" : item.interval_unit === "hours" ? "ساعت" : "دقیقه"} · {item.destination === "telegram" ? "تلگرام" : "سرور"} · نگه‌داری {fa(item.retention, 0)} نسخه</small></p>
+                <span><Clock3 /> {item.enabled ? `اجرای بعدی: ${dateTime(item.next_run)}` : "متوقف‌شده توسط مدیر"}</span>
+                <StatusBadge status={item.enabled ? "running" : "stopped"} />
+                <div className="schedule-actions">
+                  <button title="ویرایش" onClick={() => { setEditingSchedule(item); setScheduleOpen(true); }}><PencilSimple /></button>
+                  <button title={item.enabled ? "توقف موقت" : "ادامه"} onClick={() => toggleSchedule(item)}>{item.enabled ? <CircleStop /> : <Play />}</button>
+                  <button className="danger" title="حذف" onClick={() => removeSchedule(item)}><Trash2 /></button>
+                </div>
+              </div>
+            );
+          })}
+          {!schedules.length && <EmptyState title="زمان‌بندی ندارید" text="برای حفاظت پیوسته از برنامه‌ها یک برنامه بکاپ بسازید." />}
+        </div>
       </section>
       <section className="panel">
         <header className="panel__head"><div><h3>آرشیو بکاپ‌ها</h3><p>دانلود یا بازگردانی نسخه‌های ذخیره‌شده</p></div><button className="icon-button" onClick={load}><RefreshCcw /></button></header>
         <div className="backup-table">{backups.map((item) => { const app = apps.find((candidate) => candidate.id === item.app_id); return <article key={item.id}><span className="backup-table__icon"><DatabaseBackup /></span><div><strong>{app?.display_name || "برنامه حذف‌شده"}</strong><small>{item.filename}</small></div><span>{dateTime(item.created_at)}</span><b>{bytes(item.size)}</b><span>{item.destination === "telegram" ? "تلگرام" : "روی سرور"}</span><StatusBadge status={item.status} /><div>{item.status === "completed" && <><a className="icon-button" href={`/api/backups/items/${item.id}/download`}><Download /></a><button className="icon-button" onClick={() => restore(item.id)}><ArchiveRestore /></button></>}<button className="icon-button icon-button--danger" onClick={() => remove(item.id)}><Trash2 /></button></div></article>; })}{!backups.length && <EmptyState title="بکاپی وجود ندارد" text="یک نسخه پشتیبان دستی یا زمان‌بندی‌شده ایجاد کنید." />}</div>
       </section>
-      {scheduleOpen && <ScheduleModal apps={apps} close={() => setScheduleOpen(false)} saved={() => { void load(); notify("زمان‌بندی ساخته شد"); }} />}
+      {scheduleOpen && <ScheduleModal apps={apps} schedule={editingSchedule} close={() => { setScheduleOpen(false); setEditingSchedule(null); }} saved={() => { void load(); notify(editingSchedule ? "زمان‌بندی ویرایش شد" : "زمان‌بندی ساخته شد"); }} />}
       {telegramOpen && <TelegramModal close={() => setTelegramOpen(false)} saved={() => { void load(); notify("ربات تلگرام متصل شد"); }} />}
+      {quickOpen && <QuickBackupModal apps={apps} close={() => setQuickOpen(false)} create={create} />}
     </>
   );
 }

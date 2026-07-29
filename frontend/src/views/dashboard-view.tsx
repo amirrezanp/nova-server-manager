@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  ArrowUpLeft, Boxes, CheckCircle2, CircleGauge, Cpu, Database,
+  Activity, ArrowUpLeft, Boxes, CheckCircle2, CircleGauge, Cpu, Database,
   HardDrive, MemoryStick, Plus, Rocket, Server, ShieldCheck, UploadCloud,
 } from "@/lib/icons";
+import Image from "next/image";
 import type { ActivityItem, Deployment, NovaApp, SystemMetrics } from "@/lib/types";
 import { ago, bytes, fa, stageLabels, typeLabels } from "@/lib/format";
 import { AppGlyph, EmptyState, ProgressBar, StatusBadge } from "@/components/ui";
@@ -43,27 +44,32 @@ export default function DashboardView({
   const running = apps.filter((item) => item.status === "running").length;
   const activeDeployment = deployments.find((item) => ["queued", "running"].includes(item.status));
   const activeApp = activeDeployment ? apps.find((item) => item.id === activeDeployment.app_id) : null;
+  const uptimeDays = Math.floor(metrics.uptime_seconds / 86400);
 
   return (
     <>
       <section className="welcome">
-        <div>
-          <span className="eyebrow"><ShieldCheck /> همه‌چیز تحت کنترل است</span>
-          <h2>امروز چه چیزی را <em>منتشر می‌کنید؟</em></h2>
-          <p>وضعیت سرور پایدار است و {fa(running, 0)} سرویس هم‌اکنون در حال اجرا هستند.</p>
+        <div className="welcome__copy">
+          <span className="eyebrow"><ShieldCheck /> خوش آمدید، همه‌چیز آماده است</span>
+          <h2>همه‌چیز <em>تحت کنترل</em> است</h2>
+          <p>وضعیت سرور پایدار است و سرویس‌های مهم بدون مشکل در حال اجرا هستند.</p>
+          <div className="welcome__actions">
+            <button className="button button--primary" onClick={onCreate}><Plus /> برنامه جدید</button>
+            <button className="button button--ghost" onClick={() => navigate("deployments")}><Rocket /> مشاهده گزارش‌ها</button>
+          </div>
         </div>
-        <div className="welcome__actions">
-          <button className="button button--ghost" onClick={() => navigate("deployments")}><Rocket /> مشاهده دیپلوی‌ها</button>
-          <button className="button button--primary" onClick={onCreate}><Plus /> برنامه جدید</button>
+        <div className="welcome__visual">
+          <Image src="/nova-server-hero.webp" alt="" width={1536} height={1024} priority />
         </div>
-        <div className="welcome__orb"><Server /></div>
       </section>
 
       <section className="resource-grid">
-        <ResourceCard label="پردازنده" value={`${fa(metrics.cpu_percent)}٪`} caption={`${fa(metrics.cpu_count, 0)} هسته پردازشی`} percent={metrics.cpu_percent} icon={Cpu} color="#ff6b42" />
-        <ResourceCard label="حافظه RAM" value={bytes(metrics.memory_used)} caption={`از ${bytes(metrics.memory_total)}`} percent={metrics.memory_percent} icon={MemoryStick} color="#7c6cff" />
-        <ResourceCard label="فضای ذخیره‌سازی" value={bytes(metrics.disk_used)} caption={`${bytes(metrics.disk_free)} آزاد`} percent={metrics.disk_percent} icon={HardDrive} color="#3ac7a2" />
         <ResourceCard label="سرویس‌های فعال" value={fa(running, 0)} caption={`از ${fa(apps.length, 0)} برنامه`} percent={apps.length ? running / apps.length * 100 : 0} icon={Boxes} color="#5aa7ff" />
+        <ResourceCard label="پردازنده CPU" value={`${fa(metrics.cpu_percent)}٪`} caption={`${fa(metrics.cpu_count, 0)} هسته پردازشی`} percent={metrics.cpu_percent} icon={Cpu} color="#ff7955" />
+        <ResourceCard label="حافظه RAM" value={`${fa(metrics.memory_percent)}٪`} caption={`${bytes(metrics.memory_used)} / ${bytes(metrics.memory_total)}`} percent={metrics.memory_percent} icon={MemoryStick} color="#8b7cf6" />
+        <ResourceCard label="فضای ذخیره‌سازی" value={`${fa(metrics.disk_percent)}٪`} caption={`${bytes(metrics.disk_free)} آزاد`} percent={metrics.disk_percent} icon={HardDrive} color="#3ad6b0" />
+        <ResourceCard label="ترافیک شبکه" value={bytes(metrics.network_total)} caption="ارسال و دریافت کل" percent={Math.min(100, metrics.network_total / (1024 ** 4) * 100)} icon={Activity} color="#43a6ff" />
+        <ResourceCard label="آپتایم سرور" value={`${fa(uptimeDays, 0)} روز`} caption="بدون وقفه" percent={Math.min(100, uptimeDays / 30 * 100)} icon={ShieldCheck} color="#35d394" />
       </section>
 
       {activeDeployment && (

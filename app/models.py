@@ -39,6 +39,8 @@ class App(Base):
     source_dir: Mapped[str] = mapped_column(Text)
     volume_name: Mapped[str] = mapped_column(String(150), default="")
     database_admin_port: Mapped[int] = mapped_column(Integer, default=0)
+    database_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    database_allowed_cidrs: Mapped[str] = mapped_column(Text, default="[]")
     last_error: Mapped[str] = mapped_column(Text, default="")
     last_upload_name: Mapped[str] = mapped_column(String(255), default="")
     last_upload_size: Mapped[int] = mapped_column(Integer, default=0)

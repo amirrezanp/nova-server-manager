@@ -122,3 +122,8 @@ class ContainerExecRequest(BaseModel):
 
 class DatabaseAdminRequest(BaseModel):
     enabled: bool = True
+
+
+class DatabaseAccessRequest(BaseModel):
+    enabled: bool = False
+    allowed_cidrs: list[str] = Field(default_factory=list, max_length=50)

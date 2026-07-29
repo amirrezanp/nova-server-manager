@@ -196,6 +196,11 @@ def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
     source_error = validate_source(app, source)
     if source_error:
         return source_error
+    if app.app_type in {"postgres", "mongodb"} and app.database_public:
+        from app.services.database_access_service import configure_database_firewall
+        firewall = configure_database_firewall(app)
+        if not firewall.ok:
+            return firewall
     remove(app)
     network = ensure_network()
     if not network.ok:
@@ -211,11 +216,14 @@ def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
             "docker", "run", "-d", "--name", app.container_name,
             "--restart", "unless-stopped",
             "--network", NETWORK_NAME,
-            "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
+            "-p", f"{'0.0.0.0' if app.database_public else '127.0.0.1'}:{app.host_port}:{app.internal_port}",
             "-v", f"{volume}:{mount}",
             *_env_args(app), image,
         ]
         result = _verify_running(app, run_command(args, timeout=300))
+        if result.ok and not app.database_public:
+            from app.services.database_access_service import clear_database_firewall
+            clear_database_firewall(app)
         report("verifying", 90)
         return result
 

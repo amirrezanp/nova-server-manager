@@ -12,7 +12,7 @@ export function Logo({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`brand ${compact ? "brand--compact" : ""}`}>
       <div className="brand__mark"><span>N</span><i /></div>
-      {!compact && <div><strong>نوا</strong><small>NOVA SERVER MANAGER</small></div>}
+      {!compact && <div dir="ltr"><strong>NOVA</strong><small>SERVER MANAGER</small></div>}
     </div>
   );
 }

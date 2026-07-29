@@ -5,7 +5,7 @@ import {
   Cloud, Copy, Certificate, DatabaseBackup, Download, ExternalLink, Eye, EyeSlash, File, FileArchive, FileCode2,
   FileZip, Folder, FolderOpen, Globe2, GridFour, HardDrive, History, LinkSimple, ListBullets, LoaderCircle, MoreHorizontal, PackageCheck,
   PencilSimple, Play, Plus, RefreshCcw, Rocket, RotateCw, Save, Search, Settings2, SquareTerminal,
-  Trash2, UploadCloud, X, Zap,
+  ShieldCheck, Trash2, UploadCloud, X, Zap,
 } from "@/lib/icons";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Deployment, FileItem, NovaApp, UploadProgress, UploadRecord } from "@/lib/types";
@@ -134,6 +134,11 @@ function OverviewTab({
   const lastDeploy = deployments[0];
   const [showPassword, setShowPassword] = useState(false);
   const [adminBusy, setAdminBusy] = useState(false);
+  const [publicBusy, setPublicBusy] = useState(false);
+  const [allowedCidrs, setAllowedCidrs] = useState((app.database?.allowed_cidrs || []).join("\n"));
+  useEffect(() => {
+    setAllowedCidrs((app.database?.allowed_cidrs || []).join("\n"));
+  }, [app.database?.allowed_cidrs]);
   async function copyValue(value: string) {
     await navigator.clipboard.writeText(value);
     notify("در کلیپ‌بورد کپی شد");
@@ -151,6 +156,26 @@ function OverviewTab({
       notify(error instanceof Error ? error.message : "تغییر وضعیت پنل دیتابیس ناموفق بود", "error");
     } finally {
       setAdminBusy(false);
+    }
+  }
+  async function saveDatabaseAccess(enabled: boolean) {
+    const cidrs = allowedCidrs.split(/[\n,]+/).map((value) => value.trim()).filter(Boolean);
+    if (enabled && !cidrs.length) {
+      notify("حداقل IP سروری که باید متصل شود را وارد کنید", "error");
+      return;
+    }
+    setPublicBusy(true);
+    try {
+      await api(`/api/apps/${app.id}/database-access`, {
+        method: "POST",
+        body: { enabled, allowed_cidrs: enabled ? cidrs : [] },
+      });
+      await reload();
+      notify(enabled ? "دسترسی خارجی دیتابیس فعال شد" : "دسترسی خارجی دیتابیس بسته شد");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "تغییر دسترسی دیتابیس ناموفق بود", "error");
+    } finally {
+      setPublicBusy(false);
     }
   }
   return (
@@ -188,6 +213,53 @@ function OverviewTab({
               <button className="button button--soft" onClick={() => copyValue(app.database!.internal_uri)}><Copy /> کپی URI داخلی</button>
             </div>
             <div className="database-security"><Zap /><p><strong>اتصال امن</strong><small>پورت دیتابیس فقط روی 127.0.0.1 منتشر شده است. برای اتصال از سیستم شخصی از SSH Tunnel استفاده کنید.</small></p><code dir="ltr">ssh -L {app.database.port}:127.0.0.1:{app.database.port} root@SERVER_IP</code></div>
+            <div className={`database-public-access ${app.database.public_enabled ? "is-enabled" : ""}`}>
+              <header>
+                <span><Globe2 /></span>
+                <div>
+                  <strong>اتصال از سرورهای دیگر</strong>
+                  <small>
+                    {app.database.public_enabled
+                      ? "پورت عمومی فعال است و فقط IPهای زیر از فایروال عبور می‌کنند."
+                      : "به‌صورت پیش‌فرض دیتابیس فقط داخل همین سرور قابل دسترسی است."}
+                  </small>
+                </div>
+                <StatusBadge status={app.database.public_enabled ? "running" : "stopped"} />
+              </header>
+              <div className="database-public-access__form">
+                <Field label="IP یا CIDR سرورهای مجاز" hint="هر IP را در یک خط وارد کنید؛ مثال: 203.0.113.25 یا 198.51.100.0/24">
+                  <textarea
+                    dir="ltr"
+                    rows={3}
+                    value={allowedCidrs}
+                    onChange={(event) => setAllowedCidrs(event.target.value)}
+                    placeholder={"203.0.113.25\n198.51.100.0/24"}
+                  />
+                </Field>
+                <button
+                  className={`button ${app.database.public_enabled ? "button--danger" : "button--primary"}`}
+                  disabled={publicBusy}
+                  onClick={() => saveDatabaseAccess(!app.database!.public_enabled)}
+                >
+                  {publicBusy ? <LoaderCircle className="spin" /> : <ShieldCheck />}
+                  {app.database.public_enabled ? "بستن دسترسی خارجی" : "فعال‌سازی امن"}
+                </button>
+              </div>
+              {app.database.public_enabled && (
+                <div className="database-remote-details">
+                  <div><span>Remote host</span><strong dir="ltr">{app.database.remote_host || "Public server IP"}</strong></div>
+                  <div><span>Remote port</span><strong dir="ltr">{app.database.port}</strong></div>
+                  <div className="database-remote-details__uri">
+                    <span>Remote Connection URI</span>
+                    <code>{app.database.remote_uri}</code>
+                    <button onClick={() => copyValue(app.database!.remote_uri)}><Copy /></button>
+                  </div>
+                </div>
+              )}
+              <p className="database-public-access__warning">
+                علاوه بر این تنظیم، در Firewall یا Security Group شرکت ارائه‌دهنده سرور نیز پورت {app.database.port} را فقط برای همین IPها باز کنید.
+              </p>
+            </div>
             <div className="database-sidecar">
               <div>
                 <span><DatabaseBackup /></span>

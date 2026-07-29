@@ -140,6 +140,20 @@ def test_auth_app_files_and_backup_flow(monkeypatch):
         schedules = client.get("/api/backups/schedules/all")
         assert schedules.status_code == 200
         assert schedules.json()[0]["app_id"] == app_id
+        schedule_id = schedules.json()[0]["id"]
+        paused = client.put(f"/api/backups/schedules/{schedule_id}", json={
+            "app_id": app_id,
+            "enabled": False,
+            "destination": "local",
+            "interval_value": 6,
+            "interval_unit": "hours",
+            "retention": 3,
+        })
+        assert paused.status_code == 200
+        assert paused.json()["enabled"] is False
+        assert paused.json()["next_run"] is None
+        deleted_schedule = client.delete(f"/api/backups/schedules/{schedule_id}")
+        assert deleted_schedule.status_code == 200
 
 
 def test_setup_cannot_run_twice():
@@ -244,3 +258,51 @@ def test_database_admin_sidecar_lifecycle(monkeypatch):
         assert disabled.status_code == 200, disabled.text
         assert disabled.json()["port"] == 0
         assert client.get(f"/api/apps/{app_id}").json()["database"]["admin_enabled"] is False
+
+
+def test_database_remote_access_is_opt_in_and_ip_restricted(monkeypatch):
+    monkeypatch.setattr(docker_service, "inspect_status", lambda _app: "stopped")
+    from app.services import database_access_service
+    monkeypatch.setattr(
+        database_access_service,
+        "configure_database_firewall",
+        lambda _app: CommandResult(True, "", "", 0),
+    )
+    monkeypatch.setattr(database_access_service, "clear_database_firewall", lambda _app: None)
+
+    with TestClient(app) as client:
+        login = client.post("/api/auth/login", json={
+            "username": "admin",
+            "password": "a-strong-test-password",
+        })
+        assert login.status_code == 200
+        created = client.post("/api/apps", json={
+            "name": "remote-access-database",
+            "display_name": "Remote database",
+            "app_type": "postgres",
+        })
+        assert created.status_code == 201, created.text
+        app_id = created.json()["id"]
+
+        invalid = client.post(f"/api/apps/{app_id}/database-access", json={
+            "enabled": True,
+            "allowed_cidrs": [],
+        })
+        assert invalid.status_code == 400
+
+        enabled = client.post(f"/api/apps/{app_id}/database-access", json={
+            "enabled": True,
+            "allowed_cidrs": ["203.0.113.25", "198.51.100.0/24"],
+        })
+        assert enabled.status_code == 200, enabled.text
+        database = enabled.json()["database"]
+        assert database["public_enabled"] is True
+        assert database["allowed_cidrs"] == ["203.0.113.25/32", "198.51.100.0/24"]
+        assert enabled.json()["database_public"] is True
+
+        disabled = client.post(f"/api/apps/{app_id}/database-access", json={
+            "enabled": False,
+            "allowed_cidrs": [],
+        })
+        assert disabled.status_code == 200
+        assert disabled.json()["database"]["public_enabled"] is False

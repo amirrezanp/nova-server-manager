@@ -13,9 +13,13 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.models import ActivityLog, App, Deployment, UploadRecord, User
 from app.routers.helpers import app_dict, deployment_dict, upload_dict
-from app.schemas import AppCreate, AppUpdate, ContainerExecRequest, DatabaseAdminRequest, DomainRequest
+from app.schemas import (
+    AppCreate, AppUpdate, ContainerExecRequest, DatabaseAccessRequest,
+    DatabaseAdminRequest, DomainRequest,
+)
 from app.security import get_current_user
 from app.services import docker_service, proxy_service
+from app.services import database_access_service
 from app.services.file_service import directory_stats, extract_zip_safely
 
 
@@ -410,6 +414,52 @@ def database_admin(
     }
 
 
+@router.post("/{app_id}/database-access")
+def database_access(
+    app_id: int,
+    payload: DatabaseAccessRequest,
+    db: Session = Depends(get_db),
+):
+    app = _get_app(db, app_id)
+    if app.app_type not in {"postgres", "mongodb"}:
+        raise HTTPException(400, "این برنامه سرویس دیتابیس نیست")
+    try:
+        cidrs = database_access_service.normalize_cidrs(payload.allowed_cidrs)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if payload.enabled and not cidrs:
+        raise HTTPException(400, "برای دسترسی خارجی حداقل یک IP یا CIDR مجاز وارد کنید")
+
+    old_public = app.database_public
+    old_cidrs = app.database_allowed_cidrs
+    app.database_public = payload.enabled
+    app.database_allowed_cidrs = json.dumps(cidrs)
+    was_running = docker_service.inspect_status(app) == "running"
+    if was_running:
+        result = docker_service.deploy(app)
+        if not result.ok:
+            app.database_public = old_public
+            app.database_allowed_cidrs = old_cidrs
+            docker_service.deploy(app)
+            raise HTTPException(500, result.stderr or result.stdout)
+    elif payload.enabled:
+        firewall = database_access_service.configure_database_firewall(app)
+        if not firewall.ok:
+            app.database_public = old_public
+            app.database_allowed_cidrs = old_cidrs
+            raise HTTPException(500, firewall.stderr or firewall.stdout)
+    else:
+        database_access_service.clear_database_firewall(app)
+
+    db.add(ActivityLog(
+        action="database_access",
+        detail=f"{app.name}: {'public' if payload.enabled else 'private'} ({', '.join(cidrs)})",
+    ))
+    db.commit()
+    db.refresh(app)
+    return app_dict(app, include_env=True)
+
+
 @router.api_route(
     "/{app_id}/database-admin/ui/{proxy_path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -506,6 +556,7 @@ def delete_domain(app_id: int, domain: str, db: Session = Depends(get_db)):
 def delete_app(app_id: int, delete_data: bool = False, db: Session = Depends(get_db)):
     app = _get_app(db, app_id)
     docker_service.remove_database_admin(app)
+    database_access_service.clear_database_firewall(app)
     docker_service.remove(app)
     proxy_service.remove_domain(app)
     name = app.name

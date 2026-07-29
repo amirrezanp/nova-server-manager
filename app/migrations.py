@@ -6,6 +6,8 @@ from app.database import engine
 APP_COLUMNS: dict[str, str] = {
     "domains_json": "TEXT NOT NULL DEFAULT '[]'",
     "database_admin_port": "INTEGER NOT NULL DEFAULT 0",
+    "database_public": "BOOLEAN NOT NULL DEFAULT 0",
+    "database_allowed_cidrs": "TEXT NOT NULL DEFAULT '[]'",
     "last_upload_name": "VARCHAR(255) NOT NULL DEFAULT ''",
     "last_upload_size": "INTEGER NOT NULL DEFAULT 0",
     "last_upload_at": "DATETIME",

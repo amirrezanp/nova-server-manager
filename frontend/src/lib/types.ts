@@ -16,6 +16,8 @@ export interface NovaApp {
   source_dir: string;
   volume_name: string;
   database_admin_port: number;
+  database_public: boolean;
+  database_allowed_cidrs: string[];
   last_error: string;
   environment?: Record<string, string>;
   database?: DatabaseConnection;
@@ -57,6 +59,10 @@ export interface DatabaseConnection {
   volume: string;
   admin_enabled: boolean;
   admin_url: string;
+  public_enabled: boolean;
+  remote_host: string;
+  remote_uri: string;
+  allowed_cidrs: string[];
 }
 
 export interface SystemMetrics {
@@ -69,6 +75,9 @@ export interface SystemMetrics {
   disk_used: number;
   disk_total: number;
   disk_free: number;
+  network_sent: number;
+  network_received: number;
+  network_total: number;
   max_upload_bytes: number;
   load: number[];
   uptime_seconds: number;

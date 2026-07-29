@@ -6,6 +6,7 @@ from app.models import App, Backup, BackupSchedule, Deployment, UploadRecord
 def app_dict(app: App, include_env: bool = False) -> dict:
     import json
     from urllib.parse import quote
+    from app.services.system_service import primary_ipv4
     try:
         domains = json.loads(app.domains_json or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -28,6 +29,8 @@ def app_dict(app: App, include_env: bool = False) -> dict:
         "source_dir": app.source_dir,
         "volume_name": app.volume_name,
         "database_admin_port": app.database_admin_port,
+        "database_public": app.database_public,
+        "database_allowed_cidrs": json.loads(app.database_allowed_cidrs or "[]"),
         "last_error": app.last_error,
         "last_upload_name": app.last_upload_name,
         "last_upload_size": app.last_upload_size,
@@ -40,6 +43,7 @@ def app_dict(app: App, include_env: bool = False) -> dict:
     }
     if include_env:
         environment = json.loads(app.env_json or "{}")
+        remote_host = primary_ipv4()
         data["environment"] = environment
         if app.app_type == "postgres":
             username = environment.get("POSTGRES_USER", "nova")
@@ -59,6 +63,10 @@ def app_dict(app: App, include_env: bool = False) -> dict:
                 "volume": app.volume_name,
                 "admin_enabled": bool(app.database_admin_port),
                 "admin_url": f"/api/apps/{app.id}/database-admin/ui/" if app.database_admin_port else "",
+                "public_enabled": app.database_public,
+                "remote_host": remote_host,
+                "remote_uri": f"postgresql://{quote(username, safe='')}:{quote(password, safe='')}@{remote_host}:{app.host_port}/{quote(database, safe='')}" if remote_host else "",
+                "allowed_cidrs": json.loads(app.database_allowed_cidrs or "[]"),
             }
         elif app.app_type == "mongodb":
             username = environment.get("MONGO_INITDB_ROOT_USERNAME", "nova")
@@ -78,6 +86,10 @@ def app_dict(app: App, include_env: bool = False) -> dict:
                 "volume": app.volume_name,
                 "admin_enabled": bool(app.database_admin_port),
                 "admin_url": f"/api/apps/{app.id}/database-admin/ui/" if app.database_admin_port else "",
+                "public_enabled": app.database_public,
+                "remote_host": remote_host,
+                "remote_uri": f"mongodb://{quote(username, safe='')}:{quote(password, safe='')}@{remote_host}:{app.host_port}/{quote(database, safe='')}?authSource=admin" if remote_host else "",
+                "allowed_cidrs": json.loads(app.database_allowed_cidrs or "[]"),
             }
     return data
 
