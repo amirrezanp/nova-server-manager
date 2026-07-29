@@ -87,10 +87,18 @@ def rename_item(root: Path, old_relative: str, new_relative: str) -> None:
 def extract_zip_safely(archive: Path, destination: Path) -> None:
     destination = destination.resolve()
     with zipfile.ZipFile(archive) as package:
-        total = sum(item.file_size for item in package.infolist())
+        members = package.infolist()
+        if len(members) > 100_000:
+            raise ValueError("تعداد فایل‌های ZIP بیش از حد مجاز است")
+        if any(item.flag_bits & 0x1 for item in members):
+            raise ValueError("فایل ZIP رمزگذاری‌شده پشتیبانی نمی‌شود")
+        total = sum(item.file_size for item in members)
         if total > 2 * 1024 * 1024 * 1024:
             raise ValueError("حجم بازشدهٔ فایل بیش از ۲ گیگابایت است")
-        for item in package.infolist():
+        free_space = shutil.disk_usage(destination.parent).free
+        if total + 512 * 1024 * 1024 > free_space:
+            raise ValueError("فضای آزاد سرور برای استخراج این فایل کافی نیست")
+        for item in members:
             target = (destination / item.filename).resolve()
             if target != destination and destination not in target.parents:
                 raise ValueError("ساختار ZIP ناامن است")

@@ -3,7 +3,7 @@
 import {
   ArrowUpLeft, Boxes, CheckCircle2, CircleGauge, Cpu, Database,
   HardDrive, MemoryStick, Plus, Rocket, Server, ShieldCheck, UploadCloud,
-} from "lucide-react";
+} from "@/lib/icons";
 import type { ActivityItem, Deployment, NovaApp, SystemMetrics } from "@/lib/types";
 import { ago, bytes, fa, stageLabels, typeLabels } from "@/lib/format";
 import { AppGlyph, EmptyState, ProgressBar, StatusBadge } from "@/components/ui";
@@ -117,4 +117,3 @@ export default function DashboardView({
     </>
   );
 }
-

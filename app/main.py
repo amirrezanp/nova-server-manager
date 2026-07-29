@@ -9,6 +9,7 @@ from app.config import settings
 from app.database import Base, engine
 from app.migrations import run_migrations
 from app.routers import apps, auth, backups, deployments, files, settings as settings_router, system
+from app.services.deployment_state_service import reconcile_interrupted_deployments
 from app.services.scheduler_service import start_scheduler, stop_scheduler
 
 
@@ -17,6 +18,7 @@ async def lifespan(_: FastAPI):
     settings.ensure_directories()
     Base.metadata.create_all(bind=engine)
     run_migrations()
+    reconcile_interrupted_deployments()
     start_scheduler()
     yield
     stop_scheduler()
@@ -24,7 +26,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Nova Server Manager API",
-    version="2.0.1",
+    version="2.2.0",
     docs_url="/api/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -58,7 +60,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "service": "nova-server-manager", "version": "2.0.1"}
+    return {"ok": True, "service": "nova-server-manager", "version": "2.2.0"}
 
 
 @app.get("/{path:path}", include_in_schema=False)

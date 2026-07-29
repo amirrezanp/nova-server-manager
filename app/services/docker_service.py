@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import socket
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -35,10 +36,16 @@ def docker_available() -> bool:
     return run_command(["docker", "info"], timeout=20).ok
 
 
-def ensure_network() -> None:
+def ensure_network() -> CommandResult:
     exists = run_command(["docker", "network", "inspect", NETWORK_NAME], timeout=30)
-    if not exists.ok:
-        run_command(["docker", "network", "create", NETWORK_NAME], timeout=60)
+    if exists.ok:
+        return exists
+    created = run_command(["docker", "network", "create", NETWORK_NAME], timeout=60)
+    if created.ok:
+        return created
+    # A concurrent deployment may have created the network after our first check.
+    confirmed = run_command(["docker", "network", "inspect", NETWORK_NAME], timeout=30)
+    return confirmed if confirmed.ok else created
 
 
 def allocate_port(start: int = 10000, end: int = 20000) -> int:
@@ -65,7 +72,7 @@ def write_dockerignore(source: Path) -> None:
 def generate_dockerfile(app: App) -> None:
     source = Path(app.source_dir)
     dockerfile = source / "Dockerfile.nova"
-    if dockerfile.exists() or (source / "Dockerfile").exists():
+    if (source / "Dockerfile").exists():
         return
     command = app.start_command.strip()
     def cmd(value: str) -> str:
@@ -74,13 +81,13 @@ def generate_dockerfile(app: App) -> None:
         "nextjs": (
             "FROM node:22-alpine\nWORKDIR /app\nCOPY package*.json ./\n"
             "RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi\n"
-            "COPY . .\nRUN npm run build\n"
+            f"COPY . .\nRUN npm run build\nENV PORT={app.internal_port}\n"
             f"EXPOSE {app.internal_port}\n{cmd(command or 'npm start')}"
         ),
         "nodejs": (
             "FROM node:22-alpine\nWORKDIR /app\nCOPY package*.json ./\n"
             "RUN if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi\n"
-            "COPY . .\n"
+            f"COPY . .\nENV PORT={app.internal_port}\n"
             f"EXPOSE {app.internal_port}\n{cmd(command or 'npm start')}"
         ),
         "django": (
@@ -88,21 +95,24 @@ def generate_dockerfile(app: App) -> None:
             "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
             "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt gunicorn\n"
             "COPY . .\n"
-            f"EXPOSE {app.internal_port}\n{cmd(command or 'gunicorn config.wsgi:application --bind 0.0.0.0:8000')}"
+            f"EXPOSE {app.internal_port}\n"
+            f"{cmd(command or f'gunicorn config.wsgi:application --bind 0.0.0.0:{app.internal_port}')}"
         ),
         "fastapi": (
             "FROM python:3.12-slim\nWORKDIR /app\n"
             "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
             "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n"
             "COPY . .\n"
-            f"EXPOSE {app.internal_port}\n{cmd(command or 'uvicorn main:app --host 0.0.0.0 --port 8000')}"
+            f"EXPOSE {app.internal_port}\n"
+            f"{cmd(command or f'uvicorn main:app --host 0.0.0.0 --port {app.internal_port}')}"
         ),
         "flask": (
             "FROM python:3.12-slim\nWORKDIR /app\n"
             "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
             "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt gunicorn\n"
             "COPY . .\n"
-            f"EXPOSE {app.internal_port}\n{cmd(command or 'gunicorn --bind 0.0.0.0:8000 app:app')}"
+            f"EXPOSE {app.internal_port}\n"
+            f"{cmd(command or f'gunicorn --bind 0.0.0.0:{app.internal_port} app:app')}"
         ),
     }
     if app.app_type in templates:
@@ -110,11 +120,44 @@ def generate_dockerfile(app: App) -> None:
         write_dockerignore(source)
 
 
+def validate_source(app: App, source: Path) -> CommandResult | None:
+    """Return a friendly deployment error before starting an expensive build."""
+    if app.app_type in {"postgres", "mongodb"}:
+        return None
+    if app.app_type == "docker":
+        if app.image.strip():
+            return None
+        return CommandResult(False, "", "A Docker image is required for this application type.", 2)
+    user_entries = (
+        [item for item in source.iterdir() if item.name not in {"Dockerfile.nova", ".dockerignore"}]
+        if source.exists()
+        else []
+    )
+    if not user_entries:
+        return CommandResult(
+            False, "", "No source files were found. Upload a ZIP file before deployment.", 2
+        )
+    if (source / "Dockerfile").exists():
+        return None
+    required = {
+        "nextjs": "package.json",
+        "nodejs": "package.json",
+        "django": "requirements.txt",
+        "fastapi": "requirements.txt",
+        "flask": "requirements.txt",
+    }.get(app.app_type)
+    if required and not (source / required).is_file():
+        return CommandResult(
+            False, "", f"Required file '{required}' was not found in the project root.", 2
+        )
+    return None
+
+
 def _env_args(app: App) -> list[str]:
     result: list[str] = []
     env = json.loads(app.env_json or "{}")
     for key, value in env.items():
-        if key.replace("_", "").isalnum() and not key[0].isdigit():
+        if key and key.replace("_", "").isalnum() and not key[0].isdigit():
             result.extend(["-e", f"{key}={value}"])
     return result
 
@@ -122,13 +165,41 @@ def _env_args(app: App) -> list[str]:
 ProgressCallback = Callable[[str, int], None]
 
 
+def container_exists(app: App) -> bool:
+    return run_command(["docker", "container", "inspect", app.container_name], timeout=20).ok
+
+
+def _verify_running(app: App, started: CommandResult, attempts: int = 4) -> CommandResult:
+    if not started.ok:
+        return started
+    for _ in range(attempts):
+        time.sleep(1)
+        if inspect_status(app) == "running":
+            return started
+    container_logs = logs(app, 100)
+    detail = container_logs or "The container exited before it became healthy."
+    return CommandResult(
+        False,
+        started.stdout,
+        f"{started.stderr}\nContainer verification failed:\n{detail}".strip(),
+        1,
+    )
+
+
 def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
     report = progress or (lambda _stage, _percent: None)
     report("preparing", 8)
     source = Path(app.source_dir)
     source.mkdir(parents=True, exist_ok=True)
+    source_error = validate_source(app, source)
+    if source_error:
+        return source_error
     remove(app)
-    ensure_network()
+    network = ensure_network()
+    if not network.ok:
+        return CommandResult(
+            False, network.stdout, network.stderr or "Unable to create the Nova Docker network.", network.returncode
+        )
     if app.app_type in {"postgres", "mongodb"}:
         report("starting_database", 45)
         image = app.image or DEFAULT_IMAGES[app.app_type]
@@ -142,7 +213,7 @@ def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
             "-v", f"{volume}:{mount}",
             *_env_args(app), image,
         ]
-        result = run_command(args, timeout=300)
+        result = _verify_running(app, run_command(args, timeout=300))
         report("verifying", 90)
         return result
 
@@ -150,26 +221,26 @@ def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
         report("starting_container", 50)
         image = app.image or DEFAULT_IMAGES[app.app_type]
         mount = "/usr/share/nginx/html:ro" if app.app_type == "static" else "/var/www/html"
-        result = run_command([
+        result = _verify_running(app, run_command([
             "docker", "run", "-d", "--name", app.container_name,
             "--restart", "unless-stopped",
             "--network", NETWORK_NAME,
             "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
             "-v", f"{source.resolve()}:{mount}",
             *_env_args(app), image,
-        ], timeout=300)
+        ], timeout=300))
         report("verifying", 90)
         return result
 
     if app.app_type == "docker" and app.image:
         report("pulling_and_starting", 42)
-        result = run_command([
+        result = _verify_running(app, run_command([
             "docker", "run", "-d", "--name", app.container_name,
             "--restart", "unless-stopped",
             "--network", NETWORK_NAME,
             "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
             *_env_args(app), app.image,
-        ], timeout=300)
+        ], timeout=300))
         report("verifying", 90)
         return result
 
@@ -187,15 +258,20 @@ def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
         return built
     app.image = image
     report("starting_container", 78)
-    result = run_command([
+    result = _verify_running(app, run_command([
         "docker", "run", "-d", "--name", app.container_name,
         "--restart", "unless-stopped",
         "--network", NETWORK_NAME,
         "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
         *_env_args(app), image,
-    ], timeout=300)
+    ], timeout=300))
     report("verifying", 92)
-    return result
+    return CommandResult(
+        result.ok,
+        (built.stdout + "\n" + result.stdout).strip(),
+        (built.stderr + "\n" + result.stderr).strip(),
+        result.returncode,
+    )
 
 
 def action(app: App, operation: str) -> CommandResult:

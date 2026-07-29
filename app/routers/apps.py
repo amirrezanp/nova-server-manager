@@ -47,7 +47,21 @@ def _deploy_background(app_id: int, deployment_id: int) -> None:
             deployment.progress = progress
             db.commit()
 
-        result = docker_service.deploy(app, update_progress)
+        try:
+            result = docker_service.deploy(app, update_progress)
+        except Exception as exc:
+            from app.services.common import CommandResult
+            db.rollback()
+            app = db.get(App, app_id)
+            deployment = db.get(Deployment, deployment_id)
+            if not app or not deployment:
+                return
+            result = CommandResult(
+                False,
+                "",
+                f"Unexpected deployment error: {type(exc).__name__}: {exc}",
+                1,
+            )
         app.status = "running" if result.ok else "failed"
         app.last_error = "" if result.ok else (result.stderr or result.stdout)[-5000:]
         if result.ok:
@@ -118,7 +132,11 @@ def create_app(payload: AppCreate, db: Session = Depends(get_db)):
 @router.get("/{app_id}")
 def get_app(app_id: int, db: Session = Depends(get_db)):
     app = _get_app(db, app_id)
-    app.status = docker_service.inspect_status(app)
+    current = docker_service.inspect_status(app)
+    if current == "running":
+        app.status = "running"
+    elif app.status not in {"failed", "deploying"}:
+        app.status = current
     db.commit()
     return app_dict(app, include_env=True)
 
@@ -146,7 +164,19 @@ async def upload_source(
     filename = (file.filename or "").lower()
     if not filename.endswith(".zip"):
         raise HTTPException(400, "فقط فایل ZIP پذیرفته می‌شود")
-    temp = settings.data_dir / f"upload-{app.id}-{secrets.token_hex(6)}.zip"
+    active_upload = db.scalar(
+        select(UploadRecord).where(
+            UploadRecord.app_id == app.id,
+            UploadRecord.status == "processing",
+        )
+    )
+    if active_upload:
+        raise HTTPException(409, "یک فایل دیگر برای این برنامه در حال پردازش است")
+    token = secrets.token_hex(6)
+    temp = settings.data_dir / f"upload-{app.id}-{token}.zip"
+    source = Path(app.source_dir)
+    staging = source.parent / f".{app.name}-staging-{token}"
+    old = source.parent / f".{app.name}-old-{token}"
     size = 0
     record = UploadRecord(
         app_id=app.id,
@@ -163,30 +193,23 @@ async def upload_source(
                 if size > settings.max_upload_mb * 1024 * 1024:
                     raise HTTPException(413, "حجم فایل بیشتر از حد مجاز است")
                 output.write(chunk)
-        source = Path(app.source_dir)
-        if any(source.iterdir()):
-            old = source.parent / f".{app.name}-old"
-            if old.exists():
-                shutil.rmtree(old)
-            source.rename(old)
-            source.mkdir()
-            try:
-                extract_zip_safely(temp, source)
-            except Exception:
-                shutil.rmtree(source)
-                old.rename(source)
-                raise
-            shutil.rmtree(old)
-        else:
-            extract_zip_safely(temp, source)
+        staging.mkdir(parents=True)
+        extract_zip_safely(temp, staging)
         # Flatten ZIPs containing one top-level directory.
-        entries = list(source.iterdir())
+        entries = list(staging.iterdir())
         if len(entries) == 1 and entries[0].is_dir():
             nested = entries[0]
             for child in list(nested.iterdir()):
-                child.rename(source / child.name)
+                child.rename(staging / child.name)
             nested.rmdir()
-        file_count, extracted_size = directory_stats(source)
+        file_count, extracted_size = directory_stats(staging)
+        if not file_count:
+            raise ValueError("فایل ZIP هیچ فایل قابل استفاده‌ای ندارد")
+        if source.exists():
+            source.rename(old)
+        staging.rename(source)
+        if old.exists():
+            shutil.rmtree(old)
         now = datetime.now(timezone.utc)
         app.last_upload_name = record.filename
         app.last_upload_size = size
@@ -222,6 +245,12 @@ async def upload_source(
         raise HTTPException(400, str(exc))
     finally:
         temp.unlink(missing_ok=True)
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        if old.exists() and not source.exists():
+            old.rename(source)
+        elif old.exists():
+            shutil.rmtree(old, ignore_errors=True)
 
 
 @router.post("/{app_id}/deploy", status_code=202)
@@ -229,6 +258,14 @@ def deploy_app(app_id: int, tasks: BackgroundTasks, db: Session = Depends(get_db
     app = _get_app(db, app_id)
     if not docker_service.docker_available():
         raise HTTPException(503, "Docker در دسترس نیست")
+    active = db.scalar(
+        select(Deployment).where(
+            Deployment.app_id == app.id,
+            Deployment.status.in_(("queued", "running")),
+        )
+    )
+    if active:
+        raise HTTPException(409, "یک دیپلوی برای این برنامه در حال اجرا است")
     app.status = "deploying"
     app.last_error = ""
     deployment = Deployment(app_id=app.id, status="queued", stage="queued", progress=0)
@@ -272,9 +309,27 @@ def app_action(app_id: int, operation: str, db: Session = Depends(get_db)):
     if operation not in {"start", "stop", "restart"}:
         raise HTTPException(404, "عملیات نامعتبر")
     app = _get_app(db, app_id)
+    exists = docker_service.container_exists(app)
+    if not exists and operation == "stop":
+        app.status = "stopped"
+        db.commit()
+        return {"ok": True, "status": "stopped"}
+    if not exists:
+        raise HTTPException(
+            409,
+            "کانتینر هنوز ساخته نشده است؛ ابتدا برنامه را دیپلوی کنید",
+        )
     result = docker_service.action(app, operation)
     if not result.ok:
-        raise HTTPException(500, result.stderr or result.stdout)
+        message = (result.stderr or result.stdout or "عملیات Docker ناموفق بود").strip()
+        app.last_error = message[-5000:]
+        db.add(ActivityLog(
+            action=f"app_{operation}",
+            detail=f"{app.name}: {message[-500:]}",
+            level="error",
+        ))
+        db.commit()
+        raise HTTPException(409, message)
     app.status = "stopped" if operation == "stop" else "running"
     db.add(ActivityLog(action=f"app_{operation}", detail=app.name))
     db.commit()

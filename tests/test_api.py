@@ -25,7 +25,7 @@ def make_zip(files: dict[str, str]) -> bytes:
     return output.getvalue()
 
 
-def test_auth_app_files_and_backup_flow():
+def test_auth_app_files_and_backup_flow(monkeypatch):
     with TestClient(app) as client:
         status = client.get("/api/auth/status")
         assert status.status_code == 200
@@ -71,6 +71,39 @@ def test_auth_app_files_and_backup_flow():
         history = client.get(f"/api/apps/{app_id}/uploads")
         assert history.status_code == 200
         assert history.json()[0]["status"] == "completed"
+
+        from app.services import docker_service
+        from app.services.common import CommandResult
+        monkeypatch.setattr(docker_service, "docker_available", lambda: True)
+
+        def successful_deploy(_app, progress):
+            progress("building_image", 50)
+            progress("verifying", 92)
+            return CommandResult(True, "container-id", "", 0)
+
+        monkeypatch.setattr(docker_service, "deploy", successful_deploy)
+        deployment = client.post(f"/api/apps/{app_id}/deploy")
+        assert deployment.status_code == 202
+        deployment_history = client.get(f"/api/apps/{app_id}/deployments").json()
+        assert deployment_history[0]["status"] == "completed"
+        assert deployment_history[0]["progress"] == 100
+
+        def broken_deploy(_app, _progress):
+            raise RuntimeError("simulated build failure")
+
+        monkeypatch.setattr(docker_service, "deploy", broken_deploy)
+        failed_deployment = client.post(f"/api/apps/{app_id}/deploy")
+        assert failed_deployment.status_code == 202
+        deployment_history = client.get(f"/api/apps/{app_id}/deployments").json()
+        assert deployment_history[0]["status"] == "failed"
+        assert "simulated build failure" in deployment_history[0]["output"]
+
+        monkeypatch.setattr(docker_service, "container_exists", lambda _: False)
+        not_deployed = client.post(f"/api/apps/{app_id}/actions/start")
+        assert not_deployed.status_code == 409
+        assert "دیپلوی" in not_deployed.json()["detail"]
+        already_stopped = client.post(f"/api/apps/{app_id}/actions/stop")
+        assert already_stopped.status_code == 200
 
         content = client.get(f"/api/apps/{app_id}/files/content", params={"path": "index.html"})
         assert content.json()["content"] == "<h1>Nova</h1>"

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, X, LoaderCircle, PackageOpen } from "lucide-react";
+import { Check, X, LoaderCircle, PackageOpen } from "@/lib/icons";
 import { ReactNode, useEffect } from "react";
 import { statusLabels, typeLabels } from "@/lib/format";
 
@@ -89,4 +89,3 @@ export function Field({
 }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return <label className={`field ${className}`}><span>{label}</span>{children}{hint && <small>{hint}</small>}</label>;
 }
-

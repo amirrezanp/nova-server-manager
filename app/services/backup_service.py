@@ -73,6 +73,10 @@ def create_backup(db: Session, app: App, destination: str = "local") -> Backup:
         with tempfile.TemporaryDirectory(prefix="nova-backup-") as temp:
             temp_dir = Path(temp)
             dump = _database_dump(app, temp_dir)
+            if app.app_type in {"postgres", "mongodb"} and dump is None:
+                raise RuntimeError(
+                    "تهیه dump دیتابیس ناموفق بود؛ وضعیت کانتینر و لاگ دیتابیس را بررسی کنید"
+                )
             manifest = temp_dir / "manifest.json"
             manifest.write_text(json.dumps({
                 "app": app.name,
@@ -98,6 +102,7 @@ def create_backup(db: Session, app: App, destination: str = "local") -> Backup:
     except Exception as exc:
         record.status = "failed"
         record.error = str(exc)[:2000]
+        output.unlink(missing_ok=True)
     db.commit()
     db.refresh(record)
     return record
@@ -125,13 +130,22 @@ def restore_backup(app: App, backup: Backup) -> None:
             _safe_extract(archive, temp_dir)
         restored_source = temp_dir / "source"
         if restored_source.exists():
-            source.mkdir(parents=True, exist_ok=True)
-            for child in source.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            shutil.copytree(restored_source, source, dirs_exist_ok=True)
+            token = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+            staging = source.parent / f".{app.name}-restore-{token}"
+            previous = source.parent / f".{app.name}-before-restore-{token}"
+            try:
+                shutil.copytree(restored_source, staging)
+                if source.exists():
+                    source.rename(previous)
+                staging.rename(source)
+                if previous.exists():
+                    shutil.rmtree(previous)
+            except Exception:
+                if staging.exists():
+                    shutil.rmtree(staging, ignore_errors=True)
+                if previous.exists() and not source.exists():
+                    previous.rename(source)
+                raise
         sql_dump = temp_dir / "database.sql"
         mongo_dump = temp_dir / "database.archive.gz"
         if app.app_type == "postgres" and sql_dump.exists():

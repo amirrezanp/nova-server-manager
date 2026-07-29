@@ -1,6 +1,6 @@
 {
   "name": "nova-server-manager-ui",
-  "version": "2.0.1",
+  "version": "2.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,7 +10,8 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "lucide-react": "1.27.0",
+    "@fontsource-variable/vazirmatn": "5.3.0",
+    "@phosphor-icons/react": "2.1.10",
     "next": "16.2.12",
     "react": "19.2.8",
     "react-dom": "19.2.8"

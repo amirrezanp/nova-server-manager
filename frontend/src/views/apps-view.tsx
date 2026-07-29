@@ -3,7 +3,7 @@
 import {
   ArrowUpLeft, Boxes, CheckCircle2, Clock3, FileArchive, Filter,
   Globe2, Layers3, Plus, Search, Server, UploadCloud, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import { FormEvent, useMemo, useRef, useState } from "react";
 import type { NovaApp, UploadProgress } from "@/lib/types";
 import { ago, bytes, fa, typeLabels } from "@/lib/format";
@@ -11,6 +11,10 @@ import { api, uploadSource } from "@/lib/api";
 import { AppGlyph, EmptyState, Field, Modal, ProgressBar, StatusBadge } from "@/components/ui";
 
 const appTypes = ["nextjs", "nodejs", "django", "fastapi", "flask", "php", "static", "postgres", "mongodb", "docker"];
+const defaultPorts: Record<string, number> = {
+  nextjs: 3000, nodejs: 3000, django: 8000, fastapi: 8000, flask: 8000,
+  php: 80, static: 80, postgres: 5432, mongodb: 27017, docker: 3000,
+};
 
 export function CreateAppModal({
   close, onCreated, notify,
@@ -24,6 +28,8 @@ export function CreateAppModal({
   const [created, setCreated] = useState<NovaApp | null>(null);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [appType, setAppType] = useState("nextjs");
+  const [internalPort, setInternalPort] = useState(3000);
   const formRef = useRef<HTMLFormElement>(null);
 
   async function create(event: FormEvent<HTMLFormElement>) {
@@ -40,7 +46,12 @@ export function CreateAppModal({
         app_type: form.get("app_type"), internal_port: Number(form.get("internal_port")),
         start_command: form.get("start_command"), image: form.get("image"), environment,
       } as never });
-      setCreated(app); setStep(2);
+      if (["postgres", "mongodb", "docker"].includes(appType)) {
+        notify("سرویس با موفقیت ساخته شد؛ اکنون می‌توانید آن را دیپلوی کنید.");
+        onCreated(app);
+      } else {
+        setCreated(app); setStep(2);
+      }
     } catch (error) { notify(error instanceof Error ? error.message : "ساخت برنامه ناموفق بود", "error"); }
     finally { setBusy(false); }
   }
@@ -70,11 +81,11 @@ export function CreateAppModal({
             <Field label="شناسه یکتا" hint="فقط حروف انگلیسی کوچک، عدد و خط تیره"><input name="name" dir="ltr" pattern="[a-z][a-z0-9-]{1,39}" placeholder="my-store" required /></Field>
           </div>
           <div className="form-grid">
-            <Field label="نوع برنامه"><select name="app_type">{appTypes.map((type) => <option key={type} value={type}>{typeLabels[type]}</option>)}</select></Field>
-            <Field label="پورت داخلی"><input name="internal_port" dir="ltr" type="number" min={1} max={65535} defaultValue={3000} required /></Field>
+            <Field label="نوع برنامه"><select name="app_type" value={appType} onChange={(event) => { const type = event.target.value; setAppType(type); setInternalPort(defaultPorts[type]); }}>{appTypes.map((type) => <option key={type} value={type}>{typeLabels[type]}</option>)}</select></Field>
+            <Field label="پورت داخلی"><input name="internal_port" dir="ltr" type="number" min={1} max={65535} value={internalPort} onChange={(event) => setInternalPort(Number(event.target.value))} required /></Field>
           </div>
           <Field label="دستور اجرا" hint="در صورت خالی بودن، دستور استاندارد فریم‌ورک استفاده می‌شود."><input name="start_command" dir="ltr" placeholder="npm start" /></Field>
-          <Field label="Docker Image" hint="فقط برای نوع Docker Image"><input name="image" dir="ltr" placeholder="ghcr.io/user/application:latest" /></Field>
+          <Field label="Docker Image" hint={appType === "docker" ? "برای این نوع سرویس الزامی است." : "فقط برای نوع Docker Image"}><input name="image" dir="ltr" placeholder="ghcr.io/user/application:latest" required={appType === "docker"} /></Field>
           <Field label="متغیرهای محیطی" hint="هر متغیر در یک خط با ساختار KEY=VALUE"><textarea name="environment" dir="ltr" rows={4} placeholder={"NODE_ENV=production\nAPI_URL=https://api.example.com"} /></Field>
           <div className="modal__actions"><button type="button" className="button button--ghost" onClick={close}>انصراف</button><button className="button button--primary" disabled={busy}>{busy ? "در حال ساخت..." : "ادامه"} <ArrowUpLeft /></button></div>
         </form>
@@ -142,4 +153,3 @@ export default function AppsView({
     </>
   );
 }
-

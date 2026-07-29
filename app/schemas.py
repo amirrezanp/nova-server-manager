@@ -1,6 +1,7 @@
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class LoginRequest(BaseModel):
@@ -29,7 +30,18 @@ class AppCreate(BaseModel):
     def validate_env(cls, value: dict[str, str]) -> dict[str, str]:
         if len(value) > 100:
             raise ValueError("حداکثر ۱۰۰ متغیر محیطی مجاز است")
+        for key in value:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise ValueError(f"نام متغیر محیطی نامعتبر است: {key!r}")
+        if any(len(item) > 10_000 for item in value.values()):
+            raise ValueError("مقدار متغیر محیطی بیش از حد طولانی است")
         return value
+
+    @model_validator(mode="after")
+    def validate_deployment_type(self):
+        if self.app_type == "docker" and not self.image.strip():
+            raise ValueError("برای نوع Docker Image واردکردن نام Image الزامی است")
+        return self
 
 
 class AppUpdate(BaseModel):
@@ -37,6 +49,13 @@ class AppUpdate(BaseModel):
     internal_port: int | None = Field(default=None, ge=1, le=65535)
     start_command: str | None = Field(default=None, max_length=500)
     environment: dict[str, str] | None = None
+
+    @field_validator("environment")
+    @classmethod
+    def validate_env(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return value
+        return AppCreate.validate_env(value)
 
 
 class DomainRequest(BaseModel):

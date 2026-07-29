@@ -15,6 +15,7 @@ export const stageLabels: Record<string, string> = {
   building_image: "ساخت Docker Image", pulling_and_starting: "دریافت و اجرای Image",
   starting_container: "اجرای کانتینر", starting_database: "راه‌اندازی دیتابیس",
   verifying: "بررسی سلامت", completed: "تکمیل شده", failed: "ناموفق",
+  interrupted: "متوقف‌شده با راه‌اندازی مجدد پنل",
 };
 
 export function fa(value: number, digits = 1) {
@@ -51,4 +52,3 @@ export function dateTime(date?: string | null) {
     dateStyle: "medium", timeStyle: "short",
   }).format(new Date(date));
 }
-

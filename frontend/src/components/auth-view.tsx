@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { ArrowLeft, LockKeyhole, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowLeft, LockKeyhole, ShieldCheck, UserRound } from "@/lib/icons";
 import { api } from "@/lib/api";
 import { Logo } from "./ui";
 
@@ -64,4 +64,3 @@ export default function AuthView({
     </main>
   );
 }
-

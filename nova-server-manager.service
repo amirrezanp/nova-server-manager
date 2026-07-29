@@ -1,20 +1,23 @@
 [Unit]
 Description=Nova Server Manager
-After=network-online.target docker.service nginx.service
+After=network-online.target nginx.service
 Wants=network-online.target
-Requires=docker.service
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/nova-server-manager
 EnvironmentFile=/opt/nova-server-manager/.env
+Environment=DOCKER_CONFIG=/var/lib/nova-server-manager/docker-config
 ExecStart=/opt/nova-server-manager/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8787 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=4
+TimeoutStartSec=60
+TimeoutStopSec=30
 PrivateTmp=true
 ProtectHome=true
+UMask=0077
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
-

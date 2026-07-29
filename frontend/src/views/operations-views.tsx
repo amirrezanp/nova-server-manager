@@ -4,7 +4,7 @@ import {
   Activity, AlertTriangle, ArchiveRestore, BellRing, Bot, CheckCircle2, Clock3,
   Cpu, DatabaseBackup, Download, HardDrive, History, KeyRound, LoaderCircle,
   MemoryStick, Power, RefreshCcw, Rocket, Server, ShieldCheck, Trash2, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import { FormEvent, useEffect, useState } from "react";
 import type { ActivityItem, Backup, BackupSchedule, Deployment, NovaApp, SystemMetrics } from "@/lib/types";
 import { ago, bytes, dateTime, duration, fa, stageLabels } from "@/lib/format";
@@ -162,4 +162,3 @@ export function SettingsView({ telegram, openTelegram }: { telegram: { configure
 }
 
 export { TelegramModal };
-

@@ -3,7 +3,7 @@
 import {
   Activity, ArchiveRestore, Bell, Boxes, ChevronLeft, Command, DatabaseBackup,
   LayoutDashboard, LogOut, Menu, Rocket, Search, Server, Settings, X,
-} from "lucide-react";
+} from "@/lib/icons";
 import { ReactNode, useEffect, useState } from "react";
 import { Logo } from "./ui";
 import type { NovaApp, SystemMetrics } from "@/lib/types";
@@ -93,4 +93,3 @@ export default function Shell({
     </div>
   );
 }
-

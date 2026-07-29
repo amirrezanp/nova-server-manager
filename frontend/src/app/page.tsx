@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "@/lib/icons";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AuthView from "@/components/auth-view";
 import Shell, { type RouteName } from "@/components/shell";
@@ -127,4 +127,3 @@ export default function Home() {
     </>
   );
 }
-

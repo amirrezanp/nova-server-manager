@@ -6,7 +6,7 @@ import {
   Folder, Globe2, HardDrive, History, LoaderCircle, MoreHorizontal, PackageCheck,
   Play, Plus, RefreshCcw, Rocket, RotateCw, Save, Settings2, SquareTerminal,
   Trash2, UploadCloud, X, Zap,
-} from "lucide-react";
+} from "@/lib/icons";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import type { Deployment, FileItem, NovaApp, UploadProgress, UploadRecord } from "@/lib/types";
 import { ago, bytes, dateTime, duration, fa, stageLabels, typeLabels } from "@/lib/format";
@@ -433,4 +433,3 @@ export default function AppDetailView({
     </>
   );
 }
-
