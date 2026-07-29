@@ -95,3 +95,18 @@ def extract_zip_safely(archive: Path, destination: Path) -> None:
             if target != destination and destination not in target.parents:
                 raise ValueError("ساختار ZIP ناامن است")
         package.extractall(destination)
+
+
+def directory_stats(root: Path) -> tuple[int, int]:
+    files = 0
+    size = 0
+    if not root.exists():
+        return files, size
+    for item in root.rglob("*"):
+        if item.is_file():
+            files += 1
+            try:
+                size += item.stat().st_size
+            except OSError:
+                pass
+    return files, size

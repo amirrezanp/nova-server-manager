@@ -57,10 +57,20 @@ def test_auth_app_files_and_backup_flow():
             files={"file": ("site.zip", package, "application/zip")},
         )
         assert upload.status_code == 200, upload.text
+        upload_data = upload.json()
+        assert upload_data["upload"]["filename"] == "site.zip"
+        assert upload_data["upload"]["files_extracted"] == 2
 
         listing = client.get(f"/api/apps/{app_id}/files")
         assert listing.status_code == 200
         assert {item["name"] for item in listing.json()["items"]} == {"index.html", "app.js"}
+
+        app_detail = client.get(f"/api/apps/{app_id}").json()
+        assert app_detail["last_upload_name"] == "site.zip"
+        assert app_detail["source_files"] == 2
+        history = client.get(f"/api/apps/{app_id}/uploads")
+        assert history.status_code == 200
+        assert history.json()[0]["status"] == "completed"
 
         content = client.get(f"/api/apps/{app_id}/files/content", params={"path": "index.html"})
         assert content.json()["content"] == "<h1>Nova</h1>"

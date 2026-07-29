@@ -21,6 +21,7 @@ def system_metrics() -> dict:
         "disk_percent": disk.percent,
         "disk_used": disk.used,
         "disk_total": disk.total,
+        "disk_free": disk.free,
         "load": list(os.getloadavg()) if hasattr(os, "getloadavg") else [0, 0, 0],
         "uptime_seconds": int(time.time() - psutil.boot_time()),
         "boot_time": boot,
@@ -34,4 +35,3 @@ def system_metrics() -> dict:
 def datetime_from_timestamp(value: float) -> str:
     from datetime import datetime, timezone
     return datetime.fromtimestamp(value, timezone.utc).isoformat()
-

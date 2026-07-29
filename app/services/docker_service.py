@@ -3,6 +3,7 @@ import os
 import secrets
 import socket
 from pathlib import Path
+from typing import Callable
 
 from app.models import App
 from app.services.common import CommandResult, run_command
@@ -118,12 +119,18 @@ def _env_args(app: App) -> list[str]:
     return result
 
 
-def deploy(app: App) -> CommandResult:
+ProgressCallback = Callable[[str, int], None]
+
+
+def deploy(app: App, progress: ProgressCallback | None = None) -> CommandResult:
+    report = progress or (lambda _stage, _percent: None)
+    report("preparing", 8)
     source = Path(app.source_dir)
     source.mkdir(parents=True, exist_ok=True)
     remove(app)
     ensure_network()
     if app.app_type in {"postgres", "mongodb"}:
+        report("starting_database", 45)
         image = app.image or DEFAULT_IMAGES[app.app_type]
         volume = app.volume_name
         mount = "/var/lib/postgresql/data" if app.app_type == "postgres" else "/data/db"
@@ -135,12 +142,15 @@ def deploy(app: App) -> CommandResult:
             "-v", f"{volume}:{mount}",
             *_env_args(app), image,
         ]
-        return run_command(args, timeout=300)
+        result = run_command(args, timeout=300)
+        report("verifying", 90)
+        return result
 
     if app.app_type in {"static", "php"}:
+        report("starting_container", 50)
         image = app.image or DEFAULT_IMAGES[app.app_type]
         mount = "/usr/share/nginx/html:ro" if app.app_type == "static" else "/var/www/html"
-        return run_command([
+        result = run_command([
             "docker", "run", "-d", "--name", app.container_name,
             "--restart", "unless-stopped",
             "--network", NETWORK_NAME,
@@ -148,19 +158,26 @@ def deploy(app: App) -> CommandResult:
             "-v", f"{source.resolve()}:{mount}",
             *_env_args(app), image,
         ], timeout=300)
+        report("verifying", 90)
+        return result
 
     if app.app_type == "docker" and app.image:
-        return run_command([
+        report("pulling_and_starting", 42)
+        result = run_command([
             "docker", "run", "-d", "--name", app.container_name,
             "--restart", "unless-stopped",
             "--network", NETWORK_NAME,
             "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
             *_env_args(app), app.image,
         ], timeout=300)
+        report("verifying", 90)
+        return result
 
+    report("generating_build", 18)
     generate_dockerfile(app)
     dockerfile = "Dockerfile" if (source / "Dockerfile").exists() else "Dockerfile.nova"
     image = f"nova/{app.name}:latest"
+    report("building_image", 30)
     built = run_command(
         ["docker", "build", "-f", dockerfile, "-t", image, "."],
         timeout=1800,
@@ -169,13 +186,16 @@ def deploy(app: App) -> CommandResult:
     if not built.ok:
         return built
     app.image = image
-    return run_command([
+    report("starting_container", 78)
+    result = run_command([
         "docker", "run", "-d", "--name", app.container_name,
         "--restart", "unless-stopped",
         "--network", NETWORK_NAME,
         "-p", f"127.0.0.1:{app.host_port}:{app.internal_port}",
         *_env_args(app), image,
     ], timeout=300)
+    report("verifying", 92)
+    return result
 
 
 def action(app: App, operation: str) -> CommandResult:

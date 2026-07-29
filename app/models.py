@@ -38,11 +38,52 @@ class App(Base):
     source_dir: Mapped[str] = mapped_column(Text)
     volume_name: Mapped[str] = mapped_column(String(150), default="")
     last_error: Mapped[str] = mapped_column(Text, default="")
+    last_upload_name: Mapped[str] = mapped_column(String(255), default="")
+    last_upload_size: Mapped[int] = mapped_column(Integer, default=0)
+    last_upload_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_size: Mapped[int] = mapped_column(Integer, default=0)
+    source_files: Mapped[int] = mapped_column(Integer, default=0)
+    last_deployed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
     backups: Mapped[list["Backup"]] = relationship(back_populates="app", cascade="all, delete-orphan")
+    uploads: Mapped[list["UploadRecord"]] = relationship(back_populates="app", cascade="all, delete-orphan")
+    deployments: Mapped[list["Deployment"]] = relationship(back_populates="app", cascade="all, delete-orphan")
+
+
+class UploadRecord(Base):
+    __tablename__ = "upload_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(30), default="processing")
+    files_extracted: Mapped[int] = mapped_column(Integer, default=0)
+    extracted_size: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    app: Mapped[App] = relationship(back_populates="uploads")
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    app_id: Mapped[int] = mapped_column(ForeignKey("apps.id"), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="queued")
+    stage: Mapped[str] = mapped_column(String(80), default="queued")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    output: Mapped[str] = mapped_column(Text, default="")
+    image: Mapped[str] = mapped_column(String(255), default="")
+    trigger: Mapped[str] = mapped_column(String(30), default="manual")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    app: Mapped[App] = relationship(back_populates="deployments")
 
 
 class Backup(Base):
@@ -90,4 +131,3 @@ class ActivityLog(Base):
     detail: Mapped[str] = mapped_column(Text, default="")
     level: Mapped[str] = mapped_column(String(20), default="info")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-

@@ -1,14 +1,20 @@
 # نوا سرور منیجر
 
-پنل مدیریت و دیپلوی فارسی برای سرورهای Ubuntu؛ با FastAPI، Docker، Nginx و رابط RTL.
+پنل مدیریت و دیپلوی فارسی برای سرورهای Ubuntu؛ با FastAPI، Docker، Nginx و رابط حرفه‌ای Next.js و RTL.
+
+نسخهٔ فعلی: **2.0.0**
 
 ## امکانات
 
-- داشبورد زندهٔ CPU، RAM، دیسک، uptime و وضعیت Docker
+- داشبورد حرفه‌ای و واکنش‌گرا با Next.js، مناسب دسکتاپ و موبایل
+- نمایش زندهٔ CPU، RAM، دیسک، فضای آزاد، uptime و وضعیت Docker
 - ساخت و دیپلوی Next.js، Node.js، Django، FastAPI، Flask، PHP و سایت استاتیک
 - ساخت PostgreSQL و MongoDB با volume دائمی و رمز تصادفی
 - اجرای Docker Image دلخواه
-- آپلود ZIP، فایل‌منیجر، ساخت/حذف فایل و ویرایشگر آنلاین
+- آپلود ZIP با درصد پیشرفت، سرعت، حجم منتقل‌شده، حجم باقی‌مانده و زمان تقریبی
+- نمایش نتیجهٔ آپلود، تعداد فایل‌های استخراج‌شده، حجم نهایی سورس و تاریخچهٔ ماندگار آپلودها
+- فایل‌منیجر، ساخت/حذف فایل و ویرایشگر آنلاین
+- تاریخچهٔ دیپلوی با مرحله، درصد پیشرفت، زمان و نتیجهٔ هر عملیات
 - Start، Stop، Restart، Build مجدد و مشاهدهٔ لاگ کانتینر
 - کنسول اجرای فرمان داخل کانتینر هر برنامه (بدون Shell مستقیم میزبان)
 - اتصال دامنه، Reverse Proxy در Nginx و SSL رایگان Let’s Encrypt
@@ -28,6 +34,17 @@
 - باز بودن پورت‌های 22، 80 و 443
 
 ## نصب
+
+### نصب مستقیم از GitHub Release
+
+بعد از انتشار فایل `nova-server-manager.tar.gz` در آخرین Release مخزن، این دستور کل پنل را نصب می‌کند:
+
+```bash
+NOVA_TMP="$(mktemp -d)" \
+&& curl -fsSL "https://github.com/amirrezanp/nova-server-manager/releases/latest/download/nova-server-manager.tar.gz" \
+| tar -xz -C "$NOVA_TMP" \
+&& sudo bash "$NOVA_TMP/install.sh"
+```
 
 پوشهٔ پروژه را روی سرور کپی و فقط این دستور را اجرا کنید:
 
@@ -111,9 +128,39 @@ sudo certbot renew --dry-run
 sudo bash update.sh
 ```
 
-فایل دیتابیس پنل و اطلاعات برنامه‌ها در `/var/lib/nova-server-manager` نگه‌داری می‌شوند و به‌روزرسانی آن‌ها را حذف نمی‌کند.
+برای آپدیت مستقیم از آخرین GitHub Release:
 
-## اجرای توسعه روی Windows
+```bash
+NOVA_TMP="$(mktemp -d)" \
+&& curl -fsSL "https://github.com/amirrezanp/nova-server-manager/releases/latest/download/nova-server-manager.tar.gz" \
+| tar -xz -C "$NOVA_TMP" \
+&& sudo bash "$NOVA_TMP/update.sh"
+```
+
+فایل دیتابیس پنل و اطلاعات برنامه‌ها در `/var/lib/nova-server-manager` نگه‌داری می‌شوند و به‌روزرسانی آن‌ها را حذف نمی‌کند.
+پیش از هر آپدیت نیز یک Snapshot از دیتابیس در `/var/lib/nova-server-manager/update-snapshots` ساخته می‌شود.
+
+## توسعهٔ رابط Next.js
+
+برای تغییر رابط کاربری، Node.js نسخهٔ 20.9 یا جدیدتر لازم است:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+رابط توسعه روی `http://localhost:3000` اجرا می‌شود و درخواست‌های API را باید به بک‌اند محلی متصل کنید. قبل از انتشار، خروجی استاتیک Next.js را داخل برنامهٔ Python بسازید:
+
+```powershell
+cd frontend
+npm run lint
+npm run build:python
+```
+
+دستور آخر پوشهٔ `app/static` را با خروجی جدید جایگزین می‌کند؛ بنابراین سرور برای اجرای پنل به Node.js نیاز ندارد.
+
+## اجرای بک‌اند روی Windows
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -136,4 +183,4 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 - مستندات API بعد از ورود: `/api/docs`
 - Health check: `/api/health`
-- نسخه: `1.0.0`
+- نسخه: `2.0.0`

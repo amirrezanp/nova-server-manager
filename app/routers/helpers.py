@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from app.models import App, Backup, BackupSchedule
+from app.models import App, Backup, BackupSchedule, Deployment, UploadRecord
 
 
 def app_dict(app: App, include_env: bool = False) -> dict:
@@ -19,12 +19,53 @@ def app_dict(app: App, include_env: bool = False) -> dict:
         "start_command": app.start_command,
         "source_dir": app.source_dir,
         "last_error": app.last_error,
+        "last_upload_name": app.last_upload_name,
+        "last_upload_size": app.last_upload_size,
+        "last_upload_at": app.last_upload_at.isoformat() if app.last_upload_at else None,
+        "source_size": app.source_size,
+        "source_files": app.source_files,
+        "last_deployed_at": app.last_deployed_at.isoformat() if app.last_deployed_at else None,
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
     }
     if include_env:
         data["environment"] = json.loads(app.env_json or "{}")
     return data
+
+
+def upload_dict(item: UploadRecord) -> dict:
+    return {
+        "id": item.id,
+        "app_id": item.app_id,
+        "filename": item.filename,
+        "size": item.size,
+        "status": item.status,
+        "files_extracted": item.files_extracted,
+        "extracted_size": item.extracted_size,
+        "error": item.error,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "completed_at": item.completed_at.isoformat() if item.completed_at else None,
+    }
+
+
+def deployment_dict(item: Deployment) -> dict:
+    duration = None
+    if item.started_at and item.finished_at:
+        duration = max(0, int((item.finished_at - item.started_at).total_seconds()))
+    return {
+        "id": item.id,
+        "app_id": item.app_id,
+        "status": item.status,
+        "stage": item.stage,
+        "progress": item.progress,
+        "output": item.output,
+        "image": item.image,
+        "trigger": item.trigger,
+        "duration_seconds": duration,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+        "started_at": item.started_at.isoformat() if item.started_at else None,
+        "finished_at": item.finished_at.isoformat() if item.finished_at else None,
+    }
 
 
 def backup_dict(backup: Backup) -> dict:
@@ -52,4 +93,3 @@ def schedule_dict(item: BackupSchedule) -> dict:
         "last_run": item.last_run.isoformat() if item.last_run else None,
         "next_run": item.next_run.isoformat() if item.next_run else None,
     }
-

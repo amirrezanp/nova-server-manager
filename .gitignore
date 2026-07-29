@@ -11,6 +11,9 @@ data/
 *.log
 .idea/
 .vscode/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
 
 
 nova-server-manager-v*.zip

@@ -53,6 +53,7 @@ install -d -m 0755 "${INSTALL_DIR}" "${DATA_DIR}/apps" "${DATA_DIR}/backups"
 rsync -a --delete \
   --exclude='.git' --exclude='.env' --exclude='.venv' --exclude='data' \
   --exclude='__pycache__' --exclude='.pytest_cache' \
+  --exclude='frontend/node_modules' --exclude='frontend/.next' --exclude='frontend/out' \
   "${SOURCE_DIR}/" "${INSTALL_DIR}/"
 
 echo "[3/7] ساخت محیط پایتون..."

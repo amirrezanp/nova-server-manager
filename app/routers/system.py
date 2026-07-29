@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.models import ActivityLog
 from app.schemas import ServerActionRequest
 from app.security import get_current_user
@@ -15,7 +16,9 @@ router = APIRouter(prefix="/api/system", tags=["system"], dependencies=[Depends(
 
 @router.get("/metrics")
 def metrics():
-    return system_metrics()
+    data = system_metrics()
+    data["max_upload_bytes"] = settings.max_upload_mb * 1024 * 1024
+    return data
 
 
 @router.get("/activity")
@@ -41,4 +44,3 @@ def server_action(
     db.commit()
     tasks.add_task(run_command, ["systemctl", command], 30)
     return {"ok": True, "action": command}
-

@@ -1,6 +1,7 @@
 import json
 import secrets
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -9,12 +10,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
-from app.models import ActivityLog, App, User
-from app.routers.helpers import app_dict
+from app.models import ActivityLog, App, Deployment, UploadRecord, User
+from app.routers.helpers import app_dict, deployment_dict, upload_dict
 from app.schemas import AppCreate, AppUpdate, ContainerExecRequest, DomainRequest
 from app.security import get_current_user
 from app.services import docker_service, proxy_service
-from app.services.file_service import extract_zip_safely
+from app.services.file_service import directory_stats, extract_zip_safely
 
 
 router = APIRouter(prefix="/api/apps", tags=["apps"], dependencies=[Depends(get_current_user)])
@@ -27,17 +28,36 @@ def _get_app(db: Session, app_id: int) -> App:
     return app
 
 
-def _deploy_background(app_id: int) -> None:
+def _deploy_background(app_id: int, deployment_id: int) -> None:
     with SessionLocal() as db:
         app = db.get(App, app_id)
-        if not app:
+        deployment = db.get(Deployment, deployment_id)
+        if not app or not deployment:
             return
         app.status = "deploying"
         app.last_error = ""
+        deployment.status = "running"
+        deployment.stage = "preparing"
+        deployment.progress = 5
+        deployment.started_at = datetime.now(timezone.utc)
         db.commit()
-        result = docker_service.deploy(app)
+
+        def update_progress(stage: str, progress: int) -> None:
+            deployment.stage = stage
+            deployment.progress = progress
+            db.commit()
+
+        result = docker_service.deploy(app, update_progress)
         app.status = "running" if result.ok else "failed"
         app.last_error = "" if result.ok else (result.stderr or result.stdout)[-5000:]
+        if result.ok:
+            app.last_deployed_at = datetime.now(timezone.utc)
+        deployment.status = "completed" if result.ok else "failed"
+        deployment.stage = "completed" if result.ok else "failed"
+        deployment.progress = 100
+        deployment.output = (result.stdout + result.stderr)[-50000:]
+        deployment.image = app.image
+        deployment.finished_at = datetime.now(timezone.utc)
         db.add(ActivityLog(
             action="deploy",
             detail=f"{app.name}: {'موفق' if result.ok else 'ناموفق'}",
@@ -128,6 +148,14 @@ async def upload_source(
         raise HTTPException(400, "فقط فایل ZIP پذیرفته می‌شود")
     temp = settings.data_dir / f"upload-{app.id}-{secrets.token_hex(6)}.zip"
     size = 0
+    record = UploadRecord(
+        app_id=app.id,
+        filename=(file.filename or "source.zip")[:255],
+        status="processing",
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
     try:
         with temp.open("wb") as output:
             while chunk := await file.read(1024 * 1024):
@@ -158,10 +186,39 @@ async def upload_source(
             for child in list(nested.iterdir()):
                 child.rename(source / child.name)
             nested.rmdir()
+        file_count, extracted_size = directory_stats(source)
+        now = datetime.now(timezone.utc)
+        app.last_upload_name = record.filename
+        app.last_upload_size = size
+        app.last_upload_at = now
+        app.source_files = file_count
+        app.source_size = extracted_size
+        record.size = size
+        record.files_extracted = file_count
+        record.extracted_size = extracted_size
+        record.status = "completed"
+        record.completed_at = now
         db.add(ActivityLog(action="source_upload", detail=f"{app.name}: {size} bytes"))
         db.commit()
-        return {"ok": True, "size": size}
-    except (ValueError, OSError) as exc:
+        return {
+            "ok": True,
+            "size": size,
+            "upload": upload_dict(record),
+            "source": {"files": file_count, "size": extracted_size},
+        }
+    except HTTPException as exc:
+        record.size = size
+        record.status = "failed"
+        record.error = str(exc.detail)[:2000]
+        record.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        raise
+    except Exception as exc:
+        record.size = size
+        record.status = "failed"
+        record.error = str(exc)[:2000]
+        record.completed_at = datetime.now(timezone.utc)
+        db.commit()
         raise HTTPException(400, str(exc))
     finally:
         temp.unlink(missing_ok=True)
@@ -174,9 +231,40 @@ def deploy_app(app_id: int, tasks: BackgroundTasks, db: Session = Depends(get_db
         raise HTTPException(503, "Docker در دسترس نیست")
     app.status = "deploying"
     app.last_error = ""
+    deployment = Deployment(app_id=app.id, status="queued", stage="queued", progress=0)
+    db.add(deployment)
     db.commit()
-    tasks.add_task(_deploy_background, app.id)
-    return {"ok": True, "status": "deploying"}
+    db.refresh(deployment)
+    tasks.add_task(_deploy_background, app.id, deployment.id)
+    return {
+        "ok": True,
+        "status": "deploying",
+        "deployment": deployment_dict(deployment),
+    }
+
+
+@router.get("/{app_id}/uploads")
+def app_uploads(app_id: int, db: Session = Depends(get_db)):
+    _get_app(db, app_id)
+    rows = db.scalars(
+        select(UploadRecord)
+        .where(UploadRecord.app_id == app_id)
+        .order_by(UploadRecord.created_at.desc())
+        .limit(20)
+    ).all()
+    return [upload_dict(item) for item in rows]
+
+
+@router.get("/{app_id}/deployments")
+def app_deployments(app_id: int, db: Session = Depends(get_db)):
+    _get_app(db, app_id)
+    rows = db.scalars(
+        select(Deployment)
+        .where(Deployment.app_id == app_id)
+        .order_by(Deployment.created_at.desc())
+        .limit(30)
+    ).all()
+    return [deployment_dict(item) for item in rows]
 
 
 @router.post("/{app_id}/actions/{operation}")
