@@ -32,7 +32,20 @@ echo "[1/7] نصب پیش‌نیازهای سیستم..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip nginx certbot python3-certbot-nginx \
-  docker.io curl ca-certificates unzip rsync ufw
+  curl ca-certificates unzip rsync ufw
+
+# Keep an existing Docker installation. Mixing Ubuntu's docker.io/containerd
+# packages with Docker CE's docker-ce/containerd.io packages causes conflicts.
+if command -v docker >/dev/null 2>&1; then
+  echo "Docker از قبل نصب است؛ همان نسخه حفظ می‌شود."
+elif apt-cache show docker-ce >/dev/null 2>&1; then
+  echo "نصب Docker CE از مخزن رسمی موجود..."
+  apt-get install -y docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin
+else
+  echo "نصب Docker از مخزن Ubuntu..."
+  apt-get install -y docker.io
+fi
 systemctl enable --now docker nginx
 
 echo "[2/7] انتقال فایل‌های برنامه..."
